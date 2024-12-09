@@ -4,93 +4,148 @@ import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.example.lrobozin.MainActivity
 
 class ShopperMonitor(private val service: AccessibilityService) {
     companion object {
-        private const val TAG = "PriceMonitor"
+        private const val TAG = "ShopperMonitor"
         private const val SHOPPER_PACKAGE = "com.instacart.shopper"
     }
 
     private var isShopperApp = false
     private var targetPrice: String? = null
+    private var lastDollarSign: AccessibilityNodeInfo? = null
+    private var priceFound = false
+    private var lastProcessedNode: AccessibilityNodeInfo? = null
 
     fun onAccessibilityEvent(event: AccessibilityEvent) {
         try {
-            // Atualiza o status se estamos no app do Shopper ou não
             val packageName = event.packageName?.toString()
             isShopperApp = packageName == SHOPPER_PACKAGE
 
-            // Por enquanto, vamos processar eventos de qualquer app
             val rootNode = service.rootInActiveWindow ?: return
-            searchForPrices(rootNode)
+            priceFound = false
+            lastDollarSign = null
+            lastProcessedNode = null
+
+            Log.d(TAG, "Iniciando processamento de evento. Package: $packageName")
+            processNode(rootNode)
             rootNode.recycle()
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing accessibility event", e)
+            Log.e(TAG, "Erro ao processar evento de acessibilidade", e)
+        }
+    }
+
+    private fun processNode(node: AccessibilityNodeInfo) {
+        try {
+            val nodeText = node.text?.toString() ?: ""
+
+            if (nodeText.isNotEmpty()) {
+                Log.v(TAG, "Processando nó com texto: '$nodeText'")
+
+                when {
+                    nodeText == "$" -> {
+                        Log.d(TAG, "Símbolo $ encontrado")
+                        lastDollarSign = node
+                        lastProcessedNode = node
+                    }
+                    lastDollarSign != null && nodeText.all { it.isDigit() || it == '.' } -> {
+                        val combinedText = "$$nodeText"
+                        Log.d(TAG, "Combinando $ com número: $combinedText")
+                        handlePrice(combinedText, node)
+                        lastDollarSign = null
+                        lastProcessedNode = node
+                    }
+                    nodeText.startsWith("$") -> {
+                        Log.d(TAG, "Texto já começa com $: $nodeText")
+                        handlePrice(nodeText, node)
+                        lastProcessedNode = node
+                    }
+                    else -> {
+                        if (nodeText.contains("$")) {
+                            Log.d(TAG, "Texto contém $ em algum lugar: $nodeText")
+                        }
+                        handlePrice(nodeText, node)
+                        lastProcessedNode = node
+                    }
+                }
+            }
+
+            // Processa os nós filhos
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                if (child != lastProcessedNode) {
+                    processNode(child)
+                }
+                child.recycle()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Erro ao processar nó", e)
+        }
+    }
+
+    private fun isPriceText(text: String): Boolean {
+        return text.matches(Regex("""\$\d+(\.\d{0,2})?"""))
+    }
+
+    private fun handlePrice(price: String, node: AccessibilityNodeInfo) {
+        if (isPriceText(price)) {
+            Log.d(TAG, """
+                Preço válido encontrado:
+                Valor: $price
+                App: ${if (isShopperApp) "Shopper" else "outro"}
+                Preço alvo: $targetPrice
+            """.trimIndent())
+
+            if (targetPrice == price) {
+                Log.d(TAG, "🎯 PREÇO ALVO ENCONTRADO! 🎯")
+                priceFound = true
+                logNodeDetails(node)
+            }
+        } else if (price.contains("$")) {
+            Log.v(TAG, "Texto com $ encontrado, mas não é um preço válido: $price")
+        }
+    }
+
+    private fun logNodeDetails(node: AccessibilityNodeInfo) {
+        try {
+            Log.d(TAG, """
+                Detalhes do nó:
+                Texto: ${node.text}
+                Classe: ${node.className}
+                ID: ${node.viewIdResourceName ?: "sem-id"}
+                Clicável: ${node.isClickable}
+                Habilitado: ${node.isEnabled}
+                Pacote: ${node.packageName}
+                Parent: ${node.parent?.className}
+                Bounds: ${node.getBoundsInScreen(android.graphics.Rect())}
+            """.trimIndent())
+        } catch (e: Exception) {
+            Log.e(TAG, "Erro ao registrar detalhes do nó", e)
         }
     }
 
     fun setTargetPrice(price: String) {
         targetPrice = price
-        Log.d(TAG, "Target price set to: $price")
+        priceFound = false
+        Log.d(TAG, "💲 Novo preço alvo definido: $price")
     }
 
-    private fun searchForPrices(node: AccessibilityNodeInfo) {
-        try {
-            // Verifica o texto do nó atual
-            val nodeText = node.text?.toString() ?: ""
-            if (nodeText.matches(MainActivity.PRICE_REGEX)) {
-                handlePriceFound(nodeText, node)
-            }
-
-            // Busca recursivamente em todos os nós filhos
-            for (i in 0 until node.childCount) {
-                val child = node.getChild(i) ?: continue
-                searchForPrices(child)
-                child.recycle()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error processing node", e)
-        }
+    fun clearTargetPrice() {
+        val oldPrice = targetPrice
+        targetPrice = null
+        priceFound = false
+        Log.d(TAG, "🚫 Preço alvo limpo. Valor anterior: $oldPrice")
     }
 
-    private fun handlePriceFound(price: String, node: AccessibilityNodeInfo) {
-        Log.d(TAG, "Found price: $price in ${if (isShopperApp) "Shopper" else "other app"}")
-
-        // Se temos um preço alvo e ele corresponde ao encontrado
-        if (targetPrice == price) {
-            Log.d(TAG, "Target price found!")
-            // Aqui você pode adicionar lógica específica quando encontrar o preço
-            // Por exemplo, notificar o usuário ou realizar alguma ação
-        }
-
-        // Para desenvolvimento/debug
-        logNodeInfo(node)
-    }
-
-    private fun logNodeInfo(node: AccessibilityNodeInfo) {
-        try {
-            val className = node.className?.toString() ?: "unknown"
-            val viewId = node.viewIdResourceName ?: "no-id"
-            Log.d(TAG, """
-                Price node details:
-                Class: $className
-                ViewId: $viewId
-                Clickable: ${node.isClickable}
-                Enabled: ${node.isEnabled}
-                Package: ${node.packageName}
-            """.trimIndent())
-        } catch (e: Exception) {
-            Log.e(TAG, "Error logging node info", e)
-        }
+    fun isPriceFound(): Boolean {
+        return priceFound
     }
 
     fun isTargetApp(): Boolean {
         return isShopperApp
     }
 
-    fun clearTargetPrice() {
-        targetPrice = null
-        Log.d(TAG, "Target price cleared")
+    fun getTargetPrice(): String? {
+        return targetPrice
     }
 }

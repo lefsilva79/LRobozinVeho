@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">LRobozin</string>
     <string name="accessibility_service_description">Service to detect and interact with price values on screen</string>
-
+    <string name="accessibility_service_label">LRobozin Accessibility Service</string>
 </resources>

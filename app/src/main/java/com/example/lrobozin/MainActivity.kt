@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -38,8 +37,7 @@ class MainActivity : ComponentActivity() {
         const val CHANNEL_ID = "search_notification"
         const val NOTIFICATION_ID = 1
         const val NOTIFICATION_PERMISSION_REQUEST_CODE = 123
-
-        val PRICE_REGEX = Regex("""\$\d+\.\d{2}""")
+        val PRICE_REGEX = Regex("""\$\d+(\.\d{0,2})?""")
     }
 
     private val searchScope = CoroutineScope(Dispatchers.Main)
@@ -162,6 +160,8 @@ fun MainScreen(coroutineScope: CoroutineScope) {
                         searchJob?.cancel()
                         isSearching = false
                         searchJob = null
+                        // Limpa o preço alvo quando cancela a busca
+                        ShopperAccessibility.getInstance()?.priceMonitor?.clearTargetPrice()
                     },
                     modifier = Modifier.weight(1f)
                 ) {
@@ -190,7 +190,11 @@ private fun startSearch(
 ): Job {
     return scope.launch {
         try {
-            val searchValue = String.format("$%.2f", number.toDoubleOrNull() ?: 0.0)
+            val searchValue = "$$number"
+
+            // Configura o preço alvo no ShopperMonitor
+            ShopperAccessibility.getInstance()?.priceMonitor?.setTargetPrice(searchValue)
+
             showNotification(
                 context,
                 "Iniciando busca",
@@ -199,16 +203,28 @@ private fun startSearch(
 
             var searching = true
             while (searching) {
-                delay(1000) // Verifica a cada segundo
+                delay(1000)
 
-                // Se o serviço de acessibilidade encontrar o valor
-                if (checkForPrice(context, searchValue)) {
-                    searching = false
+                // Verifica se o serviço está ativo
+                if (!isAccessibilityServiceEnabled(context)) {
                     showNotification(
                         context,
-                        "Valor Encontrado!",
-                        "O valor $searchValue foi encontrado na tela!"
+                        "Serviço Desativado",
+                        "Por favor, ative o serviço de acessibilidade"
                     )
+                    break
+                }
+
+                // Verifica se o preço foi encontrado usando o ShopperMonitor
+                ShopperAccessibility.getInstance()?.priceMonitor?.let { monitor ->
+                    if (monitor.isPriceFound()) {
+                        searching = false
+                        showNotification(
+                            context,
+                            "Valor Encontrado!",
+                            "O valor $searchValue foi encontrado na tela!"
+                        )
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -218,52 +234,17 @@ private fun startSearch(
                 "A busca por $number foi interrompida"
             )
         } finally {
+            // Limpa o preço alvo quando a busca termina
+            ShopperAccessibility.getInstance()?.priceMonitor?.clearTargetPrice()
             onSearchComplete()
         }
     }
 }
 
-private fun checkForPrice(context: Context, targetPrice: String): Boolean {
+private fun isAccessibilityServiceEnabled(context: Context): Boolean {
     val accessibilityManager =
         context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-
-    if (!accessibilityManager.isEnabled) {
-        return false
-    }
-
-    val rootNode = getRootInActiveWindow()
-    return searchNodeForPrice(rootNode, targetPrice)
-}
-
-private fun searchNodeForPrice(node: AccessibilityNodeInfo?, targetPrice: String): Boolean {
-    if (node == null) return false
-
-    try {
-        // Verifica o texto do nó atual
-        val nodeText = node.text?.toString() ?: ""
-        if (nodeText.matches(MainActivity.PRICE_REGEX)) {
-            if (nodeText == targetPrice) {
-                return true
-            }
-        }
-
-        // Busca recursivamente em todos os nós filhos
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (searchNodeForPrice(child, targetPrice)) {
-                return true
-            }
-            child?.recycle()
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-
-    return false
-}
-
-private fun getRootInActiveWindow(): AccessibilityNodeInfo? {
-    return ShopperAccessibility.getInstance()?.getRootNodeInActiveWindow()
+    return accessibilityManager.isEnabled
 }
 
 private fun showNotification(context: Context, title: String, content: String) {
