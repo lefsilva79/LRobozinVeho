@@ -89,7 +89,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
     private fun handlePrice(price: String, node: AccessibilityNodeInfo) {
         if (isPriceText(price)) {
-            Log.d(TAG, """
+            Log.d(
+                TAG, """
                 Preço válido encontrado:
                 Valor: $price
                 App: ${if (isShopperApp) "Shopper" else "outro"}
@@ -108,7 +109,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
     private fun logNodeDetails(node: AccessibilityNodeInfo) {
         try {
-            Log.d(TAG, """
+            Log.d(
+                TAG, """
                 Detalhes do nó:
                 Texto: ${node.text}
                 Classe: ${node.className}

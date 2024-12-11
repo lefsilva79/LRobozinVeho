@@ -6,12 +6,12 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.example.lrobozinveho.apps.shopper.ShopperMonitor
 
-class ShopperAccessibility : AccessibilityService() {
+class VehoAcessibility : AccessibilityService() {
     companion object {
         private const val TAG = "ShopperAccessibility"
-        private var instance: ShopperAccessibility? = null
+        private var instance: VehoAcessibility? = null
 
-        fun getInstance(): ShopperAccessibility? {
+        fun getInstance(): VehoAcessibility? {
             return instance
         }
     }

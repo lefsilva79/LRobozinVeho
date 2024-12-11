@@ -161,7 +161,7 @@ fun MainScreen(coroutineScope: CoroutineScope) {
                         isSearching = false
                         searchJob = null
                         // Limpa o preço alvo quando cancela a busca
-                        ShopperAccessibility.getInstance()?.priceMonitor?.clearTargetPrice()
+                        VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
                     },
                     modifier = Modifier.weight(1f)
                 ) {
@@ -193,7 +193,7 @@ private fun startSearch(
             val searchValue = "$$number"
 
             // Configura o preço alvo no ShopperMonitor
-            ShopperAccessibility.getInstance()?.priceMonitor?.setTargetPrice(searchValue)
+            VehoAcessibility.getInstance()?.priceMonitor?.setTargetPrice(searchValue)
 
             showNotification(
                 context,
@@ -216,7 +216,7 @@ private fun startSearch(
                 }
 
                 // Verifica se o preço foi encontrado usando o ShopperMonitor
-                ShopperAccessibility.getInstance()?.priceMonitor?.let { monitor ->
+                VehoAcessibility.getInstance()?.priceMonitor?.let { monitor ->
                     if (monitor.isPriceFound()) {
                         searching = false
                         showNotification(
@@ -235,7 +235,7 @@ private fun startSearch(
             )
         } finally {
             // Limpa o preço alvo quando a busca termina
-            ShopperAccessibility.getInstance()?.priceMonitor?.clearTargetPrice()
+            VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
             onSearchComplete()
         }
     }
