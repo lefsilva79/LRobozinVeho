@@ -1,6 +1,7 @@
 package com.example.lrobozinveho.apps.shopper
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -9,6 +10,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
     companion object {
         private const val TAG = "ShopperMonitor"
         private const val SHOPPER_PACKAGE = "com.vehotechnologies.Driver"
+        private const val PREFS_NAME = "ShopperMonitorPrefs"
+        private const val PREF_ONLY_VEHO = "only_veho_enabled"
     }
 
     private var isShopperApp = false
@@ -16,23 +19,66 @@ class ShopperMonitor(private val service: AccessibilityService) {
     private var lastDollarSign: AccessibilityNodeInfo? = null
     private var priceFound = false
     private var lastProcessedNode: AccessibilityNodeInfo? = null
+    private var onlyCheckVehoApp: Boolean
+
+    init {
+        // Carrega o estado salvo do switch
+        val prefs = service.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        onlyCheckVehoApp = prefs.getBoolean(PREF_ONLY_VEHO, false)
+        Log.d(TAG, "Estado inicial do switch: $onlyCheckVehoApp")
+    }
 
     fun onAccessibilityEvent(event: AccessibilityEvent) {
         try {
             val packageName = event.packageName?.toString()
             isShopperApp = packageName == SHOPPER_PACKAGE
 
-            val rootNode = service.rootInActiveWindow ?: return
-            priceFound = false
-            lastDollarSign = null
-            lastProcessedNode = null
+            Log.d(TAG, """
+                ====== NOVO EVENTO =====
+                Package: $packageName
+                É Veho? $isShopperApp
+                Modo apenas Veho? $onlyCheckVehoApp
+                =======================
+            """.trimIndent())
 
-            Log.d(TAG, "Iniciando processamento de evento. Package: $packageName")
+            // Verifica se deve processar apenas eventos do Veho
+            if (onlyCheckVehoApp && !isShopperApp) {
+                Log.d(TAG, "🚫 IGNORANDO evento - não é o app Veho")
+                clearNodes()
+                return
+            }
+
+            val rootNode = service.rootInActiveWindow ?: return
+            clearNodes()
             processNode(rootNode)
             rootNode.recycle()
+
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao processar evento de acessibilidade", e)
         }
+    }
+
+    private fun clearNodes() {
+        priceFound = false
+        lastDollarSign = null
+        lastProcessedNode = null
+    }
+
+    fun setOnlyCheckVehoApp(enabled: Boolean) {
+        onlyCheckVehoApp = enabled
+        // Salva o novo estado do switch
+        service.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_ONLY_VEHO, enabled)
+            .apply()
+
+        clearNodes()
+        Log.d(TAG, """
+            ====== ALTERAÇÃO DE MODO ======
+            Modo apenas Veho: ${if(enabled) "ATIVADO" else "DESATIVADO"}
+            Estado salvo com sucesso
+            ==============================
+        """.trimIndent())
     }
 
     private fun processNode(node: AccessibilityNodeInfo) {
@@ -40,31 +86,29 @@ class ShopperMonitor(private val service: AccessibilityService) {
             val nodeText = node.text?.toString() ?: ""
 
             if (nodeText.isNotEmpty()) {
-                Log.v(TAG, "Processando nó com texto: '$nodeText'")
-
                 when {
                     nodeText == "$" -> {
-                        Log.d(TAG, "Símbolo $ encontrado")
+                        Log.d(TAG, "💲 Símbolo $ encontrado")
                         lastDollarSign = node
                         lastProcessedNode = node
                     }
                     lastDollarSign != null && nodeText.all { it.isDigit() || it == '.' } -> {
                         val combinedText = "$$nodeText"
-                        Log.d(TAG, "Combinando $ com número: $combinedText")
+                        Log.d(TAG, "🔄 Combinando $ com número: $combinedText")
                         handlePrice(combinedText, node)
                         lastDollarSign = null
                         lastProcessedNode = node
                     }
                     nodeText.startsWith("$") -> {
-                        Log.d(TAG, "Texto já começa com $: $nodeText")
+                        Log.d(TAG, "💲 Texto já começa com $: $nodeText")
                         handlePrice(nodeText, node)
                         lastProcessedNode = node
                     }
                     else -> {
                         if (nodeText.contains("$")) {
-                            Log.d(TAG, "Texto contém $ em algum lugar: $nodeText")
+                            Log.d(TAG, "💲 Texto contém $ em algum lugar: $nodeText")
+                            handlePrice(nodeText, node)
                         }
-                        handlePrice(nodeText, node)
                         lastProcessedNode = node
                     }
                 }
@@ -83,35 +127,53 @@ class ShopperMonitor(private val service: AccessibilityService) {
         }
     }
 
+    private fun extractFirstPrice(text: String): String {
+        // Extrai o primeiro número após o $
+        val regex = """\$(\d+)""".toRegex()
+        return regex.find(text)?.groupValues?.get(1)?.let { "$$it" } ?: text
+    }
+
     private fun isPriceText(text: String): Boolean {
-        return text.matches(Regex("""\$\d+(\.\d{0,2})?"""))
+        val firstPrice = extractFirstPrice(text)
+        return firstPrice.matches(Regex("""\$\d+(\.\d{0,2})?"""))
+    }
+
+    private fun extractNumericValue(price: String): Int {
+        return price.replace("$", "").split("-")[0].toIntOrNull() ?: 0
     }
 
     private fun handlePrice(price: String, node: AccessibilityNodeInfo) {
-        if (isPriceText(price)) {
-            Log.d(
-                TAG, """
-                Preço válido encontrado:
-                Valor: $price
-                App: ${if (isShopperApp) "Shopper" else "outro"}
-                Preço alvo: $targetPrice
-            """.trimIndent())
+        val firstPrice = extractFirstPrice(price)
+        if (isPriceText(firstPrice)) {
+            // Extrai os valores numéricos para comparação
+            val foundValue = extractNumericValue(firstPrice)
+            val targetValue = targetPrice?.let { extractNumericValue(it) } ?: 0
 
-            if (targetPrice == price) {
-                Log.d(TAG, "🎯 PREÇO ALVO ENCONTRADO! 🎯")
+            Log.d(TAG, """
+            ====== PREÇO ENCONTRADO ======
+            Valor original: $price
+            Primeiro valor: $firstPrice
+            Valor numérico: $foundValue
+            Valor alvo: $targetValue
+            App: ${if (isShopperApp) "Veho" else "outro"}
+            Modo apenas Veho: $onlyCheckVehoApp
+            ============================
+        """.trimIndent())
+
+            // Só notifica se o valor alvo não for 0 (não inicializado)
+            if (targetValue > 0 && foundValue > targetValue) {
+                Log.d(TAG, "🎯 VALOR MAIOR ENCONTRADO! 🎯")
+                Log.d(TAG, "Encontrado: $$foundValue > Alvo: $$targetValue")
                 priceFound = true
                 logNodeDetails(node)
             }
-        } else if (price.contains("$")) {
-            Log.v(TAG, "Texto com $ encontrado, mas não é um preço válido: $price")
         }
     }
 
     private fun logNodeDetails(node: AccessibilityNodeInfo) {
         try {
-            Log.d(
-                TAG, """
-                Detalhes do nó:
+            Log.d(TAG, """
+                ====== DETALHES DO NÓ ======
                 Texto: ${node.text}
                 Classe: ${node.className}
                 ID: ${node.viewIdResourceName ?: "sem-id"}
@@ -120,6 +182,7 @@ class ShopperMonitor(private val service: AccessibilityService) {
                 Pacote: ${node.packageName}
                 Parent: ${node.parent?.className}
                 Bounds: ${node.getBoundsInScreen(android.graphics.Rect())}
+                ===========================
             """.trimIndent())
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao registrar detalhes do nó", e)
@@ -129,25 +192,29 @@ class ShopperMonitor(private val service: AccessibilityService) {
     fun setTargetPrice(price: String) {
         targetPrice = price
         priceFound = false
-        Log.d(TAG, "💲 Novo preço alvo definido: $price")
+        Log.d(TAG, """
+            ====== NOVO PREÇO ALVO ======
+            Valor: $price
+            Modo apenas Veho: $onlyCheckVehoApp
+            ===========================
+        """.trimIndent())
     }
 
     fun clearTargetPrice() {
         val oldPrice = targetPrice
         targetPrice = null
         priceFound = false
-        Log.d(TAG, "🚫 Preço alvo limpo. Valor anterior: $oldPrice")
+        Log.d(TAG, """
+            ====== LIMPEZA DE PREÇO ======
+            Valor anterior: $oldPrice
+            Modo apenas Veho: $onlyCheckVehoApp
+            ============================
+        """.trimIndent())
     }
 
-    fun isPriceFound(): Boolean {
-        return priceFound
-    }
+    fun isPriceFound(): Boolean = priceFound
 
-    fun isTargetApp(): Boolean {
-        return isShopperApp
-    }
+    fun isTargetApp(): Boolean = isShopperApp
 
-    fun getTargetPrice(): String? {
-        return targetPrice
-    }
+    fun getTargetPrice(): String? = targetPrice
 }

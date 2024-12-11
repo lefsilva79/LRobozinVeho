@@ -31,6 +31,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -38,14 +42,22 @@ class MainActivity : ComponentActivity() {
         const val NOTIFICATION_ID = 1
         const val NOTIFICATION_PERMISSION_REQUEST_CODE = 123
         val PRICE_REGEX = Regex("""\$\d+(\.\d{0,2})?""")
+        const val PREF_ONLY_VEHO = "only_veho_enabled" // Removido o private
     }
 
     private val searchScope = CoroutineScope(Dispatchers.Main)
+    private val sharedPreferences by lazy {
+        getSharedPreferences("app_preferences", Context.MODE_PRIVATE)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
         requestNotificationPermission()
+
+        // Restaura a configuração do Switch ao iniciar o app
+        val savedSwitchState = sharedPreferences.getBoolean(PREF_ONLY_VEHO, false)
+        VehoAcessibility.getInstance()?.priceMonitor?.setOnlyCheckVehoApp(savedSwitchState)
 
         setContent {
             MaterialTheme {
@@ -53,7 +65,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainScreen(lifecycleScope)
+                    MainScreen(lifecycleScope, savedSwitchState)
                 }
             }
         }
@@ -96,11 +108,17 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainScreen(coroutineScope: CoroutineScope) {
+fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = false) {
     val context = LocalContext.current
     var numberInput by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
+    var onlyVehoApp by rememberSaveable { mutableStateOf(initialSwitchState) }
+
+    // Efeito para persistir a mudança do Switch
+    DisposableEffect(onlyVehoApp) {
+        onDispose { }
+    }
 
     Column(
         modifier = Modifier
@@ -160,7 +178,6 @@ fun MainScreen(coroutineScope: CoroutineScope) {
                         searchJob?.cancel()
                         isSearching = false
                         searchJob = null
-                        // Limpa o preço alvo quando cancela a busca
                         VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
                     },
                     modifier = Modifier.weight(1f)
@@ -179,6 +196,31 @@ fun MainScreen(coroutineScope: CoroutineScope) {
         ) {
             Text("Verificar Serviço de Acessibilidade")
         }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Apenas detectar no app Veho",
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = onlyVehoApp,
+                onCheckedChange = { checked ->
+                    onlyVehoApp = checked
+                    // Salva o estado do switch nas preferências
+                    context.getSharedPreferences("app_preferences", Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(MainActivity.PREF_ONLY_VEHO, checked)
+                        .apply()
+                    VehoAcessibility.getInstance()?.priceMonitor?.setOnlyCheckVehoApp(checked)
+                }
+            )
+        }
     }
 }
 
@@ -191,8 +233,6 @@ private fun startSearch(
     return scope.launch {
         try {
             val searchValue = "$$number"
-
-            // Configura o preço alvo no ShopperMonitor
             VehoAcessibility.getInstance()?.priceMonitor?.setTargetPrice(searchValue)
 
             showNotification(
@@ -205,7 +245,6 @@ private fun startSearch(
             while (searching) {
                 delay(1000)
 
-                // Verifica se o serviço está ativo
                 if (!isAccessibilityServiceEnabled(context)) {
                     showNotification(
                         context,
@@ -215,7 +254,6 @@ private fun startSearch(
                     break
                 }
 
-                // Verifica se o preço foi encontrado usando o ShopperMonitor
                 VehoAcessibility.getInstance()?.priceMonitor?.let { monitor ->
                     if (monitor.isPriceFound()) {
                         searching = false
@@ -234,7 +272,6 @@ private fun startSearch(
                 "A busca por $number foi interrompida"
             )
         } finally {
-            // Limpa o preço alvo quando a busca termina
             VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
             onSearchComplete()
         }
