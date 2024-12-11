@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "LRobozin"
+rootProject.name = "LRobozinVeho"
 include(":app")
  

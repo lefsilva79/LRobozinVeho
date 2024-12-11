@@ -1,4 +1,4 @@
-package com.example.lrobozin.apps.shopper
+package com.example.lrobozinveho.apps.shopper
 
 import android.accessibilityservice.AccessibilityService
 import android.util.Log
@@ -8,7 +8,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 class ShopperMonitor(private val service: AccessibilityService) {
     companion object {
         private const val TAG = "ShopperMonitor"
-        private const val SHOPPER_PACKAGE = "com.instacart.shopper"
+        private const val SHOPPER_PACKAGE = "com.vehotechnologies.Driver"
     }
 
     private var isShopperApp = false

@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.lrobozin"
+    namespace = "com.example.lrobozinVeho"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.lrobozin"
+        applicationId = "com.example.lrobozinVeho"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
