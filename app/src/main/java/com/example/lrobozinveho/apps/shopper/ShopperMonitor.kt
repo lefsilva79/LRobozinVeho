@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.example.lrobozinveho.TryClickAndVerify
 
 class ShopperMonitor(private val service: AccessibilityService) {
     companion object {
@@ -20,6 +21,7 @@ class ShopperMonitor(private val service: AccessibilityService) {
     private var priceFound = false
     private var lastProcessedNode: AccessibilityNodeInfo? = null
     private var onlyCheckVehoApp: Boolean
+    private val clickVerifier = TryClickAndVerify()
 
     init {
         // Carrega o estado salvo do switch
@@ -34,12 +36,12 @@ class ShopperMonitor(private val service: AccessibilityService) {
             isShopperApp = packageName == SHOPPER_PACKAGE
 
             Log.d(TAG, """
-                ====== NOVO EVENTO =====
-                Package: $packageName
-                É Veho? $isShopperApp
-                Modo apenas Veho? $onlyCheckVehoApp
-                =======================
-            """.trimIndent())
+            ====== NOVO EVENTO =====
+            Package: $packageName
+            É Veho? $isShopperApp
+            Modo apenas Veho? $onlyCheckVehoApp
+            =======================
+        """.trimIndent())
 
             // Verifica se deve processar apenas eventos do Veho
             if (onlyCheckVehoApp && !isShopperApp) {
@@ -49,6 +51,16 @@ class ShopperMonitor(private val service: AccessibilityService) {
             }
 
             val rootNode = service.rootInActiveWindow ?: return
+
+            // Tenta encontrar e clicar no preço alvo
+            targetPrice?.let { price ->
+                if (clickVerifier.searchAndClickPrice(rootNode, price)) {
+                    Log.d(TAG, "✅ Preço encontrado e botão Claim clicado!")
+                    priceFound = true
+                }
+            }
+
+            // Mantém a lógica existente
             clearNodes()
             processNode(rootNode)
             rootNode.recycle()
