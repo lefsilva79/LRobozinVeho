@@ -2,41 +2,54 @@ package com.example.lrobozinveho
 
 import android.view.accessibility.AccessibilityNodeInfo
 import android.util.Log
+import java.lang.ref.WeakReference
+import java.util.WeakHashMap
+import java.util.ArrayDeque
 
 class TryClickAndVerify {
     companion object {
         private const val TAG = "TryClickAndVerify"
+        private const val CLAIM_BUTTON_ID = "claim-offer-button"
+        private const val MAX_SEARCH_LEVELS = 3
 
-        // Cache de IDs conhecidos para otimizar a busca
         private val PRICE_CONTAINER_IDS = setOf(
             "price-container",
             "offer-price",
             "price-display"
         )
 
-        private const val CLAIM_BUTTON_ID = "claim-offer-button"
-        private const val MAX_SEARCH_LEVELS = 3 // Reduzido de 5 para 3
+        private val nodeCache = WeakHashMap<String, WeakReference<AccessibilityNodeInfo>>()
+
+        private fun getCachedNode(id: String): AccessibilityNodeInfo? {
+            return nodeCache[id]?.get()
+        }
+
+        private fun cacheNode(id: String, node: AccessibilityNodeInfo) {
+            nodeCache[id] = WeakReference(node)
+        }
     }
 
     fun searchAndClickPrice(rootNode: AccessibilityNodeInfo?, targetValue: String): Boolean {
         if (rootNode == null) return false
 
         val startTime = System.currentTimeMillis()
-
-        // Converte o valor alvo para número
         val targetNumber = targetValue.replace("$", "").toIntOrNull() ?: return false
 
         try {
+            // Usando formato compatível com API 24
+            val currentTime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                .format(java.util.Date())
+
             Log.d(TAG, """
-                ====== PROCURANDO VALOR E BOTÃO CLAIM =====
-                Valor procurado: $targetNumber
-                Timestamp início: $startTime
-                =======================================
-            """.trimIndent())
+            ====== PROCURANDO VALOR E BOTÃO CLAIM =====
+            Valor procurado: $targetNumber
+            Timestamp início: $startTime
+            Data/Hora UTC: $currentTime
+            =======================================
+        """.trimIndent())
 
-            // Procura por qualquer texto que contenha um valor adequado
             val priceNodes = findNodesWithValidPrice(rootNode, targetNumber)
-
             val findTime = System.currentTimeMillis()
             Log.d(TAG, "⏱️ Tempo para encontrar nós: ${findTime - startTime}ms")
 
@@ -44,13 +57,7 @@ class TryClickAndVerify {
                 val priceText = priceNode.text?.toString() ?: continue
                 Log.d(TAG, "Encontrado texto com valor válido: $priceText")
 
-                // Tenta encontrar o botão Claim primeiro pelo ID
-                var claimButton = findNodeById(priceNode, CLAIM_BUTTON_ID)
-
-                // Se não encontrou pelo ID, procura na hierarquia
-                if (claimButton == null || !claimButton.isClickable) {
-                    claimButton = findClaimButton(priceNode)
-                }
+                val claimButton = findClaimButton(priceNode)
 
                 if (claimButton != null && claimButton.isClickable) {
                     val clickTime = System.currentTimeMillis()
@@ -70,6 +77,7 @@ class TryClickAndVerify {
             }
 
             Log.d(TAG, "❌ Nenhum botão Claim encontrado para valor >= $targetNumber")
+            logFullTreeStructure(rootNode)
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao tentar encontrar e clicar", e)
         }
@@ -79,44 +87,41 @@ class TryClickAndVerify {
 
     private fun findNodesWithValidPrice(root: AccessibilityNodeInfo, targetValue: Int): List<AccessibilityNodeInfo> {
         val nodes = mutableListOf<AccessibilityNodeInfo>()
-        val queue = ArrayList<AccessibilityNodeInfo>()
-        val visited = HashSet<AccessibilityNodeInfo>()
-        queue.add(root)
 
-        while (queue.isNotEmpty() && nodes.isEmpty()) { // Para assim que encontrar um match
-            val node = queue.removeAt(0)
-
-            if (!visited.add(node)) continue // Evita loops
-
-            // Verifica se é um container de preço conhecido
-            val isRelevantContainer = node.viewIdResourceName?.let { id ->
-                PRICE_CONTAINER_IDS.any { id.contains(it, ignoreCase = true) }
-            } ?: false
-
-            // Só processa se for um container relevante ou tiver "$"
-            if (isRelevantContainer || node.text?.toString()?.contains("$") == true) {
-                val text = node.text?.toString()
-
-                if (text != null && text.contains("$")) {
-                    val firstNumber = text.replace("$", "")
-                        .split("-")[0]
-                        .trim()
-                        .toIntOrNull()
-
-                    if (firstNumber != null && firstNumber >= targetValue) {
-                        nodes.add(node)
-                        Log.d(TAG, """
-                            💲 Encontrado valor válido:
-                            Texto completo: $text
-                            Primeiro valor: $firstNumber
-                            Valor procurado: $targetValue
-                            ID: ${node.viewIdResourceName}
-                        """.trimIndent())
-                    }
+        // Tenta encontrar diretamente pelo ID primeiro
+        PRICE_CONTAINER_IDS.forEach { id ->
+            getCachedNode(id)?.let { cachedNode ->
+                if (processPrice(cachedNode.text?.toString() ?: "", targetValue, cachedNode, nodes)) {
+                    return nodes
                 }
             }
 
-            // Só adiciona filhos se ainda não encontrou nada
+            findNodeById(root, id)?.let { priceNode ->
+                priceNode.text?.toString()?.let { text ->
+                    if (processPrice(text, targetValue, priceNode, nodes)) {
+                        cacheNode(id, priceNode)
+                        return nodes
+                    }
+                }
+            }
+        }
+
+        // Se não encontrou pelo ID, faz busca mais ampla
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        val visited = HashSet<AccessibilityNodeInfo>()
+        queue.add(root)
+
+        while (queue.isNotEmpty() && nodes.isEmpty()) {
+            val node = queue.removeFirst()
+
+            if (!visited.add(node)) continue
+
+            node.text?.toString()?.let { text ->
+                if (text.contains("$")) {
+                    processPrice(text, targetValue, node, nodes)
+                }
+            }
+
             if (nodes.isEmpty()) {
                 for (i in 0 until node.childCount) {
                     node.getChild(i)?.let { queue.add(it) }
@@ -127,14 +132,51 @@ class TryClickAndVerify {
         return nodes
     }
 
+    private fun processPrice(text: String, targetValue: Int, node: AccessibilityNodeInfo, nodes: MutableList<AccessibilityNodeInfo>): Boolean {
+        if (text.contains("$")) {
+            val firstNumber = text.replace("$", "")
+                .split("-")[0]
+                .trim()
+                .toIntOrNull()
+
+            if (firstNumber != null && firstNumber >= targetValue) {
+                nodes.add(node)
+                Log.d(TAG, """
+                    💲 Encontrado valor válido:
+                    Texto completo: $text
+                    Primeiro valor: $firstNumber
+                    Valor procurado: $targetValue
+                    ID: ${node.viewIdResourceName}
+                    Classe: ${node.className}
+                    Parent ID: ${node.parent?.viewIdResourceName}
+                """.trimIndent())
+                return true
+            }
+        }
+        return false
+    }
+
     private fun findNodeById(root: AccessibilityNodeInfo, targetId: String): AccessibilityNodeInfo? {
+        getCachedNode(targetId)?.let { return it }
+
         if (root.viewIdResourceName?.endsWith(targetId) == true) {
+            cacheNode(targetId, root)
             return root
         }
 
-        for (i in 0 until root.childCount) {
-            root.getChild(i)?.let { child ->
-                findNodeById(child, targetId)?.let { return it }
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+
+            if (node.viewIdResourceName?.endsWith(targetId) == true) {
+                cacheNode(targetId, node)
+                return node
+            }
+
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
             }
         }
 
@@ -142,62 +184,174 @@ class TryClickAndVerify {
     }
 
     private fun findClaimButton(startNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        var parent = startNode.parent
+        Log.d(TAG, "🔍 Iniciando busca por botão Claim em: ${startNode.viewIdResourceName}")
+
+        // 1. Tentar cache primeiro
+        getCachedNode(CLAIM_BUTTON_ID)?.let {
+            if (it.isClickable) {
+                Log.d(TAG, "🎯 Botão Claim encontrado no cache")
+                return it
+            }
+        }
+
+        // 2. Buscar na raiz da árvore
+        val rootNode = getRootNode(startNode)
+
+        // 3. Buscar por ID exato
+        findNodeById(rootNode, CLAIM_BUTTON_ID)?.let { button ->
+            if (button.isClickable) {
+                Log.d(TAG, "🎯 Botão Claim encontrado por ID exato")
+                cacheNode(CLAIM_BUTTON_ID, button)
+                return button
+            }
+        }
+
+        // 4. Buscar por ID parcial
+        findButtonByPartialId(rootNode, "claim")?.let { button ->
+            if (button.isClickable) {
+                Log.d(TAG, "🎯 Botão Claim encontrado por ID parcial")
+                return button
+            }
+        }
+
+        // 5. Buscar por texto/descrição
+        findClickableWithText(rootNode, "claim")?.let { button ->
+            Log.d(TAG, "🎯 Botão Claim encontrado por texto")
+            return button
+        }
+
+        // 6. Busca na hierarquia próxima
+        var currentNode = startNode
         var searchLevel = 0
 
-        while (parent != null && searchLevel < MAX_SEARCH_LEVELS) {
-            val claimButton = searchForClaimInNode(parent)
-            if (claimButton != null) {
-                Log.d(TAG, "🎯 Botão Claim encontrado próximo ao valor (nível: $searchLevel)")
-                return claimButton
+        while (currentNode.parent != null && searchLevel < MAX_SEARCH_LEVELS) {
+            currentNode = currentNode.parent
+            logNodeStructure(currentNode, searchLevel)
+
+            for (i in 0 until currentNode.childCount) {
+                currentNode.getChild(i)?.let { sibling ->
+                    if (sibling != startNode) {
+                        findClaimButtonQuick(sibling)?.let {
+                            Log.d(TAG, "🎯 Botão Claim encontrado próximo ao valor (nível: $searchLevel)")
+                            return it
+                        }
+                    }
+                }
             }
-            parent = parent.parent
             searchLevel++
         }
 
-        return searchForClaimInNode(startNode)
+        Log.d(TAG, "❌ Busca por botão Claim falhou")
+        return null
     }
 
-    private fun searchForClaimInNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val queue = ArrayList<AccessibilityNodeInfo>()
-        val visited = HashSet<AccessibilityNodeInfo>()
-        queue.add(node)
+    private fun findClaimButtonQuick(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.viewIdResourceName?.endsWith(CLAIM_BUTTON_ID) == true && node.isClickable) {
+            logClaimButtonFound(node)
+            return node
+        }
+
+        if (node.className?.contains("Button") == true &&
+            node.isClickable &&
+            (node.text?.toString()?.equals("Claim", ignoreCase = true) == true ||
+                    node.contentDescription?.toString()?.equals("Claim", ignoreCase = true) == true)) {
+            logClaimButtonFound(node)
+            return node
+        }
+
+        return null
+    }
+
+    private fun getRootNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+        var current = node
+        while (current.parent != null) {
+            current = current.parent
+        }
+        return current
+    }
+
+    private fun findButtonByPartialId(root: AccessibilityNodeInfo, partialId: String): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
 
         while (queue.isNotEmpty()) {
-            val current = queue.removeAt(0)
+            val node = queue.removeFirst()
 
-            if (visited.add(current)) {
-                if (isClaimButton(current)) {
-                    Log.d(TAG, "🔍 Encontrado botão Claim: ${current.text}")
-                    return current
-                }
+            if (node.viewIdResourceName?.contains(partialId, ignoreCase = true) == true) {
+                return node
+            }
 
-                for (i in 0 until current.childCount) {
-                    current.getChild(i)?.let { queue.add(it) }
-                }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
             }
         }
         return null
     }
 
-    private fun isClaimButton(node: AccessibilityNodeInfo): Boolean {
-        val isButton = node.className?.contains("Button") == true
-        val isClickable = node.isClickable
-        val hasClaimText = node.text?.toString() == "Claim"
-        val hasClaimDescription = node.contentDescription?.toString() == "Claim"
-        val hasClaimId = node.viewIdResourceName?.endsWith(CLAIM_BUTTON_ID) == true
+    private fun findClickableWithText(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
 
-        if (isButton && isClickable && (hasClaimText || hasClaimDescription || hasClaimId)) {
-            Log.d(TAG, """
-                🎯 Botão Claim identificado:
-                Texto: ${node.text}
-                Descrição: ${node.contentDescription}
-                ID: ${node.viewIdResourceName}
-                Clicável: $isClickable
-            """.trimIndent())
-            return true
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+
+            if (node.isClickable &&
+                (node.text?.toString()?.contains(text, ignoreCase = true) == true ||
+                        node.contentDescription?.toString()?.contains(text, ignoreCase = true) == true)) {
+                return node
+            }
+
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
+            }
         }
-        return false
+        return null
+    }
+
+    private fun logNodeStructure(node: AccessibilityNodeInfo, level: Int) {
+        Log.d(TAG, """
+            🌳 Nível $level:
+            ID: ${node.viewIdResourceName}
+            Texto: ${node.text}
+            Descrição: ${node.contentDescription}
+            Clicável: ${node.isClickable}
+            Classe: ${node.className}
+            Filhos: ${node.childCount}
+        """.trimIndent())
+    }
+
+    private fun logFullTreeStructure(root: AccessibilityNodeInfo, level: Int = 0) {
+        val indent = "  ".repeat(level)
+        Log.d(TAG, "$indent📍 Nó: ${node2String(root)}")
+
+        for (i in 0 until root.childCount) {
+            root.getChild(i)?.let { logFullTreeStructure(it, level + 1) }
+        }
+    }
+
+    private fun node2String(node: AccessibilityNodeInfo): String {
+        return """
+            {
+                id: ${node.viewIdResourceName},
+                text: ${node.text},
+                desc: ${node.contentDescription},
+                click: ${node.isClickable},
+                class: ${node.className},
+                child: ${node.childCount}
+            }
+        """.trimIndent()
+    }
+
+    private fun logClaimButtonFound(node: AccessibilityNodeInfo) {
+        Log.d(TAG, """
+            🎯 Botão Claim identificado:
+            Texto: ${node.text}
+            Descrição: ${node.contentDescription}
+            ID: ${node.viewIdResourceName}
+            Classe: ${node.className}
+            Clicável: ${node.isClickable}
+            Parent: ${node.parent?.viewIdResourceName}
+        """.trimIndent())
     }
 
     private fun recycleNodes(nodes: List<AccessibilityNodeInfo>) {
