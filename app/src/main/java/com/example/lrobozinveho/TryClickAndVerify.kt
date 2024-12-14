@@ -61,18 +61,21 @@ class TryClickAndVerify {
 
                 if (claimButton != null && claimButton.isClickable) {
                     val clickTime = System.currentTimeMillis()
-                    Log.d(TAG, "✅ Botão Claim encontrado - Tentando clicar (${clickTime - findTime}ms)")
-                    val clicked = claimButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.d(TAG, "✅ Botão Claim encontrado - MODO TESTE (SEM CLIQUE) (${clickTime - findTime}ms)")
+                    // Comentado para testes - desabilita o clique real
+                    // val clicked = claimButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    val clicked = false // Alterado para false para não disparar a notificação
                     val endTime = System.currentTimeMillis()
 
                     Log.d(TAG, """
-                        ⏱️ Tempos de execução:
-                        Busca: ${findTime - startTime}ms
-                        Clique: ${endTime - clickTime}ms
-                        Total: ${endTime - startTime}ms
-                    """.trimIndent())
+        ⏱️ Tempos de execução (MODO TESTE):
+        Busca: ${findTime - startTime}ms
+        Tempo de verificação: ${endTime - clickTime}ms
+        Total: ${endTime - startTime}ms
+        ⚠️ CLIQUE DESABILITADO - Apenas monitorando
+    """.trimIndent())
 
-                    return clicked
+                    return clicked // Retornando false evita a notificação de "encontrado e clicado"
                 }
             }
 

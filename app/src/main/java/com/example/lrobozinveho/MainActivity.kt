@@ -25,16 +25,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import androidx.compose.material3.Switch
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.*
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -42,7 +33,106 @@ class MainActivity : ComponentActivity() {
         const val NOTIFICATION_ID = 1
         const val NOTIFICATION_PERMISSION_REQUEST_CODE = 123
         val PRICE_REGEX = Regex("""\$\d+(\.\d{0,2})?""")
-        const val PREF_ONLY_VEHO = "only_veho_enabled" // Removido o private
+        const val PREF_ONLY_VEHO = "only_veho_enabled"
+
+        fun isAccessibilityServiceEnabled(context: Context): Boolean {
+            val accessibilityManager =
+                context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+            return accessibilityManager.isEnabled
+        }
+
+        fun showNotification(context: Context, title: String, content: String) {
+            val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+
+            with(NotificationManagerCompat.from(context)) {
+                if (ActivityCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    notify(NOTIFICATION_ID, builder.build())
+                }
+            }
+        }
+
+        fun startSearch(
+            context: Context,
+            price: String,
+            deliveryArea: String = "",
+            startTime: String = "",
+            hours: String = "",
+            scope: CoroutineScope,
+            onSearchComplete: () -> Unit
+        ): Job {
+            return scope.launch {
+                try {
+                    val searchValue = "$$price"
+                    VehoAcessibility.getInstance()?.priceMonitor?.apply {
+                        setTargetPrice(searchValue)
+                        if (deliveryArea.isNotEmpty()) setTargetDeliveryArea(deliveryArea)
+                        if (startTime.isNotEmpty()) setTargetStartTime(startTime)
+                        if (hours.isNotEmpty()) setTargetHours(hours)
+                    }
+
+                    showNotification(
+                        context,
+                        "Iniciando busca",
+                        buildString {
+                            append("Procurando: ")
+                            append("Preço >=$searchValue")
+                            if (deliveryArea.isNotEmpty()) append(", Area $deliveryArea")
+                            if (startTime.isNotEmpty()) append(", Horário >=$startTime")
+                            if (hours.isNotEmpty()) append(", Duração <=$hours")
+                        }
+                    )
+
+                    var searching = true
+                    while (searching) {
+                        delay(1000)
+
+                        if (!isAccessibilityServiceEnabled(context)) {
+                            showNotification(
+                                context,
+                                "Serviço Desativado",
+                                "Por favor, ative o serviço de acessibilidade"
+                            )
+                            break
+                        }
+
+                        VehoAcessibility.getInstance()?.priceMonitor?.let { monitor ->
+                            if (monitor.isPriceFound()) {
+                                searching = false
+                                showNotification(
+                                    context,
+                                    "Correspondência Encontrada!",
+                                    buildString {
+                                        append("Encontrado: ")
+                                        append("Preço >=$searchValue")
+                                        if (deliveryArea.isNotEmpty()) append(", Area $deliveryArea")
+                                        if (startTime.isNotEmpty()) append(", Horário >=$startTime")
+                                        if (hours.isNotEmpty()) append(", Duração <=$hours")
+                                    }
+                                )
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    showNotification(
+                        context,
+                        "Busca cancelada",
+                        "A busca foi interrompida"
+                    )
+                } finally {
+                    VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
+                    onSearchComplete()
+                }
+            }
+        }
     }
 
     private val searchScope = CoroutineScope(Dispatchers.Main)
@@ -55,7 +145,6 @@ class MainActivity : ComponentActivity() {
         createNotificationChannel()
         requestNotificationPermission()
 
-        // Restaura a configuração do Switch ao iniciar o app
         val savedSwitchState = sharedPreferences.getBoolean(PREF_ONLY_VEHO, false)
         VehoAcessibility.getInstance()?.priceMonitor?.setOnlyCheckVehoApp(savedSwitchState)
 
@@ -103,202 +192,6 @@ class MainActivity : ComponentActivity() {
                     NOTIFICATION_PERMISSION_REQUEST_CODE
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = false) {
-    val context = LocalContext.current
-    var numberInput by remember { mutableStateOf("") }
-    var isSearching by remember { mutableStateOf(false) }
-    var searchJob by remember { mutableStateOf<Job?>(null) }
-    var onlyVehoApp by rememberSaveable { mutableStateOf(initialSwitchState) }
-
-    // Efeito para persistir a mudança do Switch
-    DisposableEffect(onlyVehoApp) {
-        onDispose { }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "$",
-                style = MaterialTheme.typography.headlineMedium
-            )
-            OutlinedTextField(
-                value = numberInput,
-                onValueChange = { newValue ->
-                    if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
-                        numberInput = newValue
-                    }
-                },
-                label = { Text("Digite um número") },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Number
-                ),
-                enabled = !isSearching,
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(
-                onClick = {
-                    if (numberInput.isNotEmpty() && !isSearching) {
-                        isSearching = true
-                        searchJob = startSearch(context, numberInput, coroutineScope) {
-                            isSearching = false
-                            searchJob = null
-                        }
-                    }
-                },
-                enabled = numberInput.isNotEmpty() && !isSearching,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(if (isSearching) "Buscando..." else "Buscar")
-            }
-
-            if (isSearching) {
-                Button(
-                    onClick = {
-                        searchJob?.cancel()
-                        isSearching = false
-                        searchJob = null
-                        VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Stop")
-                }
-            }
-        }
-
-        Button(
-            onClick = {
-                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                context.startActivity(intent)
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Verificar Serviço de Acessibilidade")
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = "Apenas detectar no app Veho",
-                modifier = Modifier.weight(1f)
-            )
-            Switch(
-                checked = onlyVehoApp,
-                onCheckedChange = { checked ->
-                    onlyVehoApp = checked
-                    // Salva o estado do switch nas preferências
-                    context.getSharedPreferences("app_preferences", Context.MODE_PRIVATE)
-                        .edit()
-                        .putBoolean(MainActivity.PREF_ONLY_VEHO, checked)
-                        .apply()
-                    VehoAcessibility.getInstance()?.priceMonitor?.setOnlyCheckVehoApp(checked)
-                }
-            )
-        }
-    }
-}
-
-private fun startSearch(
-    context: Context,
-    number: String,
-    scope: CoroutineScope,
-    onSearchComplete: () -> Unit
-): Job {
-    return scope.launch {
-        try {
-            val searchValue = "$$number"
-            VehoAcessibility.getInstance()?.priceMonitor?.setTargetPrice(searchValue)
-
-            showNotification(
-                context,
-                "Iniciando busca",
-                "Procurando pelo valor $searchValue na tela"
-            )
-
-            var searching = true
-            while (searching) {
-                delay(1000)
-
-                if (!isAccessibilityServiceEnabled(context)) {
-                    showNotification(
-                        context,
-                        "Serviço Desativado",
-                        "Por favor, ative o serviço de acessibilidade"
-                    )
-                    break
-                }
-
-                VehoAcessibility.getInstance()?.priceMonitor?.let { monitor ->
-                    if (monitor.isPriceFound()) {
-                        searching = false
-                        showNotification(
-                            context,
-                            "Valor Encontrado!",
-                            "O valor $searchValue foi encontrado na tela!"
-                        )
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            showNotification(
-                context,
-                "Busca cancelada",
-                "A busca por $number foi interrompida"
-            )
-        } finally {
-            VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
-            onSearchComplete()
-        }
-    }
-}
-
-private fun isAccessibilityServiceEnabled(context: Context): Boolean {
-    val accessibilityManager =
-        context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-    return accessibilityManager.isEnabled
-}
-
-private fun showNotification(context: Context, title: String, content: String) {
-    val builder = NotificationCompat.Builder(context, MainActivity.CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.ic_dialog_info)
-        .setContentTitle(title)
-        .setContentText(content)
-        .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setAutoCancel(true)
-
-    with(NotificationManagerCompat.from(context)) {
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            notify(MainActivity.NOTIFICATION_ID, builder.build())
         }
     }
 }
