@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import com.example.lrobozinveho.TryClickAndVerify
 
 @Composable
 fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = false) {

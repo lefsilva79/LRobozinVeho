@@ -30,6 +30,9 @@ class ShopperMonitor(private val service: AccessibilityService) {
     private var lastProcessedNode: AccessibilityNodeInfo? = null
     private var onlyCheckVehoApp: Boolean
     private val clickVerifier = TryClickAndVerify()
+    private var lastProcessedEventTime = 0L
+    private var isProcessingEvent = false
+    private val processedNodeTexts = mutableSetOf<String>()
 
     init {
         val prefs = service.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -45,6 +48,13 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
     fun onAccessibilityEvent(event: AccessibilityEvent) {
         try {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastProcessedEventTime < 500) {
+                Log.d(TAG, "⏭️ Ignorando evento muito próximo")
+                return
+            }
+            lastProcessedEventTime = currentTime
+
             val packageName = event.packageName?.toString()
             isShopperApp = packageName == SHOPPER_PACKAGE
 
@@ -56,13 +66,13 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
             Log.d(
                 TAG, """
-                ====== NOVO EVENTO =====
-                Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                Package: $packageName
-                É Veho? $isShopperApp
-                Modo apenas Veho? $onlyCheckVehoApp
-                =======================
-                """.trimIndent()
+            ====== NOVO EVENTO =====
+            Data/Hora (UTC): ${getCurrentUTCDateTime()}
+            Package: $packageName
+            É Veho? $isShopperApp
+            Modo apenas Veho? $onlyCheckVehoApp
+            =======================
+            """.trimIndent()
             )
 
             if (onlyCheckVehoApp && !isShopperApp) {
@@ -72,19 +82,22 @@ class ShopperMonitor(private val service: AccessibilityService) {
             }
 
             val rootNode = service.rootInActiveWindow ?: return
-
             clearNodes()
 
             targetPrice?.let { price ->
                 if (clickVerifier.searchAndClickPrice(rootNode, price)) {
                     Log.d(
                         TAG, """
-                        ✅ MATCH ENCONTRADO!
-                        Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                        Preço alvo encontrado e validado!
-                    """.trimIndent()
+                    ✅ MATCH ENCONTRADO!
+                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Preço alvo encontrado e validado!
+                """.trimIndent()
                     )
                     priceFound = true
+                    if (areAllConditionsMet()) {
+                        clearTargetPrice()
+                        return
+                    }
                 }
             }
 
@@ -103,6 +116,7 @@ class ShopperMonitor(private val service: AccessibilityService) {
         hoursMatched = false
         lastDollarSign = null
         lastProcessedNode = null
+        processedNodeTexts.clear() // Adicione apenas esta linha
     }
 
     fun setOnlyCheckVehoApp(enabled: Boolean) {
@@ -126,120 +140,223 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
     private fun processNode(node: AccessibilityNodeInfo) {
         try {
+            if (!isShopperApp) return
+
             val nodeText = node.text?.toString() ?: ""
 
+            // Log de diagnóstico - todos os textos
             if (nodeText.isNotEmpty()) {
-                // Verifica Delivery Area
-                if (nodeText.contains("Delivery Area")) {
-                    val areaNumber = nodeText.filter { it.isDigit() }
-                    targetDeliveryArea?.let { target ->
-                        if (areaNumber == target) {
-                            Log.d(
-                                TAG, """
-                                ✅ DELIVERY AREA MATCH
-                                Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                                Área encontrada: $areaNumber
-                                Área alvo: $target
-                                """.trimIndent()
-                            )
-                            deliveryAreaMatched = true
-                            logNodeDetails(node)
-                        }
-                    }
-                }
-
-                // Verifica Start Time
-                if (nodeText.contains(":00") || nodeText.contains(":30")) {
-                    // Extrai a hora completa, incluindo AM/PM
-                    val timeRegex = """(\d{1,2}:\d{2}\s*(?:AM|PM))""".toRegex()
-                    val matchResult = timeRegex.find(nodeText)
-                    val fullTime = matchResult?.groupValues?.get(1)
-
-                    // Extrai apenas a hora para comparação
-                    val hourRegex = """(\d{1,2})[:.]\d{2}""".toRegex()
-                    val hourMatch = hourRegex.find(nodeText)
-                    val hour = hourMatch?.groupValues?.get(1)?.toIntOrNull()
-
-                    targetStartTime?.let { target ->
-                        if (hour != null && hour >= target) {
-                            Log.d(
-                                TAG, """
-                ✅ START TIME MATCH
-                Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                Horário encontrado: $fullTime
-                Horário numérico: $hour
-                Horário mínimo: $target
-                Texto original: $nodeText
-                """.trimIndent()
-                            )
-                            startTimeMatched = true
-                            logNodeDetails(node)
-                        }
-                    }
-                }
-
-                // Verifica Hours
-                if (nodeText.contains("hrs") || nodeText.contains("hour")) {
-                    val firstDigit = extractFirstDigit(nodeText)
-                    targetHours?.let { target ->
-                        if (firstDigit != null && firstDigit <= target) {
-                            Log.d(
-                                TAG, """
-                                ✅ HOURS MATCH
-                                Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                                Duração encontrada: $firstDigit
-                                Duração máxima: $target
-                                Texto original: $nodeText
-                                """.trimIndent()
-                            )
-                            hoursMatched = true
-                            logNodeDetails(node)
-                        }
-                    }
-                }
-
-                // Verifica Preço
-                when {
-                    nodeText == "$" -> {
-                        Log.d(TAG, "💲 Símbolo $ encontrado")
-                        lastDollarSign = node
-                        lastProcessedNode = node
-                    }
-                    lastDollarSign != null && nodeText.all { it.isDigit() || it == '.' } -> {
-                        val combinedText = "$$nodeText"
-                        Log.d(TAG, "🔄 Combinando $ com número: $combinedText")
-                        handlePrice(combinedText, node)
-                        lastDollarSign = null
-                        lastProcessedNode = node
-                    }
-                    nodeText.startsWith("$") -> {
-                        Log.d(TAG, "💲 Texto já começa com $: $nodeText")
-                        handlePrice(nodeText, node)
-                        lastProcessedNode = node
-                    }
-                    else -> {
-                        if (nodeText.contains("$")) {
-                            Log.d(TAG, "💲 Texto contém $ em algum lugar: $nodeText")
-                            handlePrice(nodeText, node)
-                        }
-                        lastProcessedNode = node
-                    }
-                }
+                Log.d(TAG, """
+                📝 TEXTO NA TELA:
+                Texto: '$nodeText'
+                Classe: ${node.className}
+                ID: ${node.viewIdResourceName ?: "sem-id"}
+                Parent: ${node.parent?.className}
+                ====================
+            """.trimIndent())
             }
 
-            checkAllConditions()
+            // Se já processamos este texto, pula
+            if (nodeText.isNotEmpty() && !processedNodeTexts.contains(nodeText)) {
+                processedNodeTexts.add(nodeText)
 
+                // Se encontrou um preço válido, procura os outros dados ao redor
+                if (nodeText.startsWith("$") || nodeText.contains("$")) {
+                    val price = extractFirstPrice(nodeText)
+                    if (isPriceText(price)) {
+                        val foundValue = extractNumericValue(price)
+                        val targetValue = targetPrice?.let { extractNumericValue(it) } ?: 0
+
+                        if (foundValue >= targetValue) {
+                            Log.d(TAG, "💲 Preço elegível encontrado: $price >= $targetPrice")
+
+                            // Procura nos nós irmãos e pai
+                            searchSiblingNodes(node)
+                            searchParentNode(node.parent)
+
+                            // Verifica condições e loga detalhes
+                            Log.d(TAG, """
+                            🔍 CONDIÇÕES APÓS BUSCA EXPANDIDA:
+                            Preço encontrado: $priceFound ($price)
+                            Delivery Area ok: $deliveryAreaMatched (Alvo: $targetDeliveryArea)
+                            Start Time ok: $startTimeMatched (Alvo: $targetStartTime)
+                            Hours ok: $hoursMatched (Alvo: $targetHours)
+                            ====================
+                        """.trimIndent())
+
+                            if (areAllConditionsMet()) {
+                                Log.d(TAG, "🎯 TODAS CONDIÇÕES ATENDIDAS! Clicando...")
+                                clickVerifier.searchAndClickPrice(node, targetPrice!!)
+                                clearTargetPrice()
+                                return
+                            }
+                        }
+                    }
+                }
+
+                // Processa o nó com a lógica detalhada original
+                processSingleNode(node)
+            }
+
+            // Continua nos filhos se não encontrou match completo
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i) ?: continue
-                if (child != lastProcessedNode) {
-                    processNode(child)
+                processNode(child)
+                if (areAllConditionsMet()) {
+                    child.recycle()
+                    return
                 }
                 child.recycle()
             }
+
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao processar nó", e)
         }
     }
+
+    // NOVA FUNÇÃO: Procura nos nós irmãos
+    private fun searchSiblingNodes(node: AccessibilityNodeInfo) {
+        val parent = node.parent ?: return
+        for (i in 0 until parent.childCount) {
+            val sibling = parent.getChild(i) ?: continue
+            if (sibling != node) {
+                Log.d(TAG, "👥 Verificando nó irmão")
+                processSingleNode(sibling)
+            }
+            sibling.recycle()
+        }
+    }
+
+    // NOVA FUNÇÃO: Procura no nó pai
+    private fun searchParentNode(parent: AccessibilityNodeInfo?) {
+        parent?.let {
+            Log.d(TAG, "👆 Verificando nó pai")
+            processSingleNode(it)
+        }
+    }
+
+
+    // Nova função que contém a lógica original de processamento de um único nó
+    private fun processSingleNode(node: AccessibilityNodeInfo) {
+        val nodeText = node.text?.toString() ?: ""
+        if (nodeText.isEmpty()) return
+
+        // Verifica Delivery Area
+        if (nodeText.contains("Delivery Area")) {
+            val areaNumber = nodeText.filter { it.isDigit() }
+            targetDeliveryArea?.let { target ->
+                if (areaNumber == target) {
+                    Log.d(TAG, """
+                    ✅ DELIVERY AREA MATCH
+                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Área encontrada: $areaNumber
+                    Área alvo: $target
+                    """.trimIndent()
+                    )
+                    deliveryAreaMatched = true
+                    logNodeDetails(node)
+                }
+            }
+        }
+
+        // Verifica Start Time
+        if (nodeText.contains(":00") || nodeText.contains(":30")) {
+            val timeRegex = """(\d{1,2}:\d{2}\s*(?:AM|PM))""".toRegex()
+            val matchResult = timeRegex.find(nodeText)
+            val fullTime = matchResult?.groupValues?.get(1)
+
+            val hourRegex = """(\d{1,2})[:.]\d{2}""".toRegex()
+            val hourMatch = hourRegex.find(nodeText)
+            val hour = hourMatch?.groupValues?.get(1)?.toIntOrNull()
+
+            targetStartTime?.let { target ->
+                if (hour != null && hour >= target) {
+                    Log.d(TAG, """
+                    ✅ START TIME MATCH
+                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Horário encontrado: $fullTime
+                    Horário numérico: $hour
+                    Horário mínimo: $target
+                    Texto original: $nodeText
+                    """.trimIndent()
+                    )
+                    startTimeMatched = true
+                    logNodeDetails(node)
+                }
+            }
+        }
+
+        // Verifica Hours
+        if (nodeText.contains("hrs") || nodeText.contains("hour")) {
+            val firstDigit = extractFirstDigit(nodeText)
+            targetHours?.let { target ->
+                if (firstDigit != null && firstDigit <= target) {
+                    Log.d(TAG, """
+                    ✅ HOURS MATCH
+                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Duração encontrada: $firstDigit
+                    Duração máxima: $target
+                    Texto original: $nodeText
+                    """.trimIndent()
+                    )
+                    hoursMatched = true
+                    logNodeDetails(node)
+                }
+            }
+        }
+
+        // Verifica Preço
+        when {
+            nodeText == "$" -> {
+                Log.d(TAG, "💲 Símbolo $ encontrado")
+                lastDollarSign = node
+                lastProcessedNode = node
+            }
+            lastDollarSign != null && nodeText.all { it.isDigit() || it == '.' } -> {
+                val combinedText = "$$nodeText"
+                Log.d(TAG, "🔄 Combinando $ com número: $combinedText")
+                handlePrice(combinedText, node)
+                lastDollarSign = null
+                lastProcessedNode = node
+            }
+            nodeText.startsWith("$") -> {
+                Log.d(TAG, "💲 Texto já começa com $: $nodeText")
+                handlePrice(nodeText, node)
+                lastProcessedNode = node
+            }
+            else -> {
+                if (nodeText.contains("$")) {
+                    Log.d(TAG, "💲 Texto contém $ em algum lugar: $nodeText")
+                    handlePrice(nodeText, node)
+                }
+                lastProcessedNode = node
+            }
+        }
+
+        checkAllConditions()
+    }
+
+    // Função auxiliar para verificar se todas as condições foram atendidas
+    private fun areAllConditionsMet(): Boolean {
+        val allMet = priceFound &&
+                (targetDeliveryArea == null || deliveryAreaMatched) &&
+                (targetStartTime == null || startTimeMatched) &&
+                (targetHours == null || hoursMatched)
+
+        if (allMet) {
+            Log.d(TAG, """
+            ✅ TODAS AS CONDIÇÕES ATENDIDAS
+            Data/Hora (UTC): ${getCurrentUTCDateTime()}
+            Preço encontrado: $priceFound
+            Delivery Area ok: ${targetDeliveryArea == null || deliveryAreaMatched}
+            Start Time ok: ${targetStartTime == null || startTimeMatched}
+            Hours ok: ${targetHours == null || hoursMatched}
+        """.trimIndent())
+        }
+
+        return allMet
+    }
+
 
     private fun extractFirstDigit(text: String): Int? {
         return text.firstOrNull { it.isDigit() }?.toString()?.toIntOrNull()
