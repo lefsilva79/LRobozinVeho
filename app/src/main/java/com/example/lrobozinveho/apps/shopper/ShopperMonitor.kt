@@ -142,6 +142,18 @@ class ShopperMonitor(private val service: AccessibilityService) {
         try {
             if (!isShopperApp) return
 
+            // INÍCIO DA ALTERAÇÃO - Adicionar essa busca otimizada
+            val priceNodes = node.findAccessibilityNodeInfosByText("$")
+            if (priceNodes?.isNotEmpty() == true) {
+                Log.d(TAG, """
+                📝 BUSCA OTIMIZADA:
+                Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                Nós com preço encontrados: ${priceNodes.size}
+                ====================
+            """.trimIndent())
+            }
+            // FIM DA ALTERAÇÃO
+
             val nodeText = node.text?.toString() ?: ""
 
             // Log de diagnóstico - todos os textos
