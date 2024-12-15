@@ -34,6 +34,12 @@ class ShopperMonitor(private val service: AccessibilityService) {
     private var isProcessingEvent = false
     private val processedNodeTexts = mutableSetOf<String>()
 
+    // Variáveis de controle de estado - agora declaradas apenas uma vez
+    private val processedNodeHashes = mutableSetOf<Int>()
+    private var lastConditionsState = ""
+    private var lastPriceNodesCount = -1
+    private var lastAllMetState = false
+
     init {
         val prefs = service.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         onlyCheckVehoApp = prefs.getBoolean(PREF_ONLY_VEHO, false)
@@ -116,7 +122,11 @@ class ShopperMonitor(private val service: AccessibilityService) {
         hoursMatched = false
         lastDollarSign = null
         lastProcessedNode = null
-        processedNodeTexts.clear() // Adicione apenas esta linha
+        processedNodeTexts.clear()
+        processedNodeHashes.clear()
+        lastConditionsState = ""
+        lastPriceNodesCount = -1
+        lastAllMetState = false
     }
 
     fun setOnlyCheckVehoApp(enabled: Boolean) {
@@ -142,9 +152,16 @@ class ShopperMonitor(private val service: AccessibilityService) {
         try {
             if (!isShopperApp) return
 
-            // INÍCIO DA ALTERAÇÃO - Adicionar essa busca otimizada
+            // Evita processar o mesmo nó novamente
+            val nodeHash = node.hashCode()
+            if (processedNodeHashes.contains(nodeHash)) {
+                return
+            }
+            processedNodeHashes.add(nodeHash)
+
             val priceNodes = node.findAccessibilityNodeInfosByText("$")
-            if (priceNodes?.isNotEmpty() == true) {
+            if (priceNodes?.isNotEmpty() == true && priceNodes.size != lastPriceNodesCount) {
+                lastPriceNodesCount = priceNodes.size
                 Log.d(TAG, """
                 📝 BUSCA OTIMIZADA:
                 Data/Hora (UTC): ${getCurrentUTCDateTime()}
@@ -152,11 +169,9 @@ class ShopperMonitor(private val service: AccessibilityService) {
                 ====================
             """.trimIndent())
             }
-            // FIM DA ALTERAÇÃO
 
             val nodeText = node.text?.toString() ?: ""
 
-            // Log de diagnóstico - todos os textos
             if (nodeText.isNotEmpty()) {
                 Log.d(TAG, """
                 📝 TEXTO NA TELA:
@@ -168,11 +183,9 @@ class ShopperMonitor(private val service: AccessibilityService) {
             """.trimIndent())
             }
 
-            // Se já processamos este texto, pula
             if (nodeText.isNotEmpty() && !processedNodeTexts.contains(nodeText)) {
                 processedNodeTexts.add(nodeText)
 
-                // Se encontrou um preço válido, procura os outros dados ao redor
                 if (nodeText.startsWith("$") || nodeText.contains("$")) {
                     val price = extractFirstPrice(nodeText)
                     if (isPriceText(price)) {
@@ -182,11 +195,9 @@ class ShopperMonitor(private val service: AccessibilityService) {
                         if (foundValue >= targetValue) {
                             Log.d(TAG, "💲 Preço elegível encontrado: $price >= $targetPrice")
 
-                            // Procura nos nós irmãos e pai
                             searchSiblingNodes(node)
                             searchParentNode(node.parent)
 
-                            // Verifica condições e loga detalhes
                             Log.d(TAG, """
                             🔍 CONDIÇÕES APÓS BUSCA EXPANDIDA:
                             Preço encontrado: $priceFound ($price)
@@ -206,11 +217,9 @@ class ShopperMonitor(private val service: AccessibilityService) {
                     }
                 }
 
-                // Processa o nó com a lógica detalhada original
                 processSingleNode(node)
             }
 
-            // Continua nos filhos se não encontrou match completo
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i) ?: continue
                 processNode(child)
@@ -226,7 +235,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
         }
     }
 
-    // NOVA FUNÇÃO: Procura nos nós irmãos
     private fun searchSiblingNodes(node: AccessibilityNodeInfo) {
         val parent = node.parent ?: return
         for (i in 0 until parent.childCount) {
@@ -239,7 +247,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
         }
     }
 
-    // NOVA FUNÇÃO: Procura no nó pai
     private fun searchParentNode(parent: AccessibilityNodeInfo?) {
         parent?.let {
             Log.d(TAG, "👆 Verificando nó pai")
@@ -247,13 +254,10 @@ class ShopperMonitor(private val service: AccessibilityService) {
         }
     }
 
-
-    // Nova função que contém a lógica original de processamento de um único nó
     private fun processSingleNode(node: AccessibilityNodeInfo) {
         val nodeText = node.text?.toString() ?: ""
         if (nodeText.isEmpty()) return
 
-        // Verifica Delivery Area
         if (nodeText.contains("Delivery Area")) {
             val areaNumber = nodeText.filter { it.isDigit() }
             targetDeliveryArea?.let { target ->
@@ -271,7 +275,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
             }
         }
 
-        // Verifica Start Time
         if (nodeText.contains(":00") || nodeText.contains(":30")) {
             val timeRegex = """(\d{1,2}:\d{2}\s*(?:AM|PM))""".toRegex()
             val matchResult = timeRegex.find(nodeText)
@@ -298,7 +301,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
             }
         }
 
-        // Verifica Hours
         if (nodeText.contains("hrs") || nodeText.contains("hour")) {
             val firstDigit = extractFirstDigit(nodeText)
             targetHours?.let { target ->
@@ -317,7 +319,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
             }
         }
 
-        // Verifica Preço
         when {
             nodeText == "$" -> {
                 Log.d(TAG, "💲 Símbolo $ encontrado")
@@ -348,14 +349,14 @@ class ShopperMonitor(private val service: AccessibilityService) {
         checkAllConditions()
     }
 
-    // Função auxiliar para verificar se todas as condições foram atendidas
     private fun areAllConditionsMet(): Boolean {
         val allMet = priceFound &&
                 (targetDeliveryArea == null || deliveryAreaMatched) &&
                 (targetStartTime == null || startTimeMatched) &&
                 (targetHours == null || hoursMatched)
 
-        if (allMet) {
+        if (allMet && allMet != lastAllMetState) {
+            lastAllMetState = allMet
             Log.d(TAG, """
             ✅ TODAS AS CONDIÇÕES ATENDIDAS
             Data/Hora (UTC): ${getCurrentUTCDateTime()}
@@ -368,7 +369,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
         return allMet
     }
-
 
     private fun extractFirstDigit(text: String): Int? {
         return text.firstOrNull { it.isDigit() }?.toString()?.toIntOrNull()
@@ -429,18 +429,27 @@ class ShopperMonitor(private val service: AccessibilityService) {
                 (targetStartTime == null || startTimeMatched) &&
                 (targetHours == null || hoursMatched)
 
-        Log.d(
-            TAG, """
-            ====== VERIFICAÇÃO DE CONDIÇÕES ======
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
+        // Criar string do estado atual
+        val currentState = """
             Preço encontrado: $priceFound
             Delivery Area ok: ${targetDeliveryArea == null || deliveryAreaMatched}
             Start Time ok: ${targetStartTime == null || startTimeMatched}
             Hours ok: ${targetHours == null || hoursMatched}
             TODAS CONDIÇÕES ATENDIDAS: $allConditionsMet
-            ===================================
-            """.trimIndent()
-        )
+        """.trimIndent()
+
+        // Só loga se o estado mudou
+        if (currentState != lastConditionsState) {
+            lastConditionsState = currentState
+            Log.d(
+                TAG, """
+                ====== VERIFICAÇÃO DE CONDIÇÕES ======
+                Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                $currentState
+                ===================================
+                """.trimIndent()
+            )
+        }
     }
 
     private fun logNodeDetails(node: AccessibilityNodeInfo) {
@@ -468,6 +477,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
     fun setTargetPrice(price: String) {
         targetPrice = price
         priceFound = false
+        lastAllMetState = false // Nova linha
+        lastConditionsState = "" // Nova linha
         Log.d(
             TAG, """
             ====== NOVO ALVO: PREÇO ======
@@ -481,6 +492,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
     fun setTargetDeliveryArea(area: String) {
         targetDeliveryArea = area
         deliveryAreaMatched = false
+        lastAllMetState = false // Nova linha
+        lastConditionsState = "" // Nova linha
         Log.d(
             TAG, """
             ====== NOVO ALVO: ÁREA ======
@@ -495,6 +508,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
         // Converte a string completa para número
         targetStartTime = time.toIntOrNull()
         startTimeMatched = false
+        lastAllMetState = false // Nova linha
+        lastConditionsState = "" // Nova linha
         Log.d(
             TAG, """
         ====== NOVO ALVO: HORÁRIO ======
@@ -508,6 +523,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
     fun setTargetHours(hours: String) {
         targetHours = hours.firstOrNull()?.toString()?.toIntOrNull()
         hoursMatched = false
+        lastAllMetState = false // Nova linha
+        lastConditionsState = "" // Nova linha
         Log.d(
             TAG, """
             ====== NOVO ALVO: DURAÇÃO ======
@@ -527,6 +544,8 @@ class ShopperMonitor(private val service: AccessibilityService) {
         deliveryAreaMatched = false
         startTimeMatched = false
         hoursMatched = false
+        lastAllMetState = false // Nova linha
+        lastConditionsState = "" // Nova linha
         Log.d(
             TAG, """
             ====== LIMPEZA DE ALVOS ======
