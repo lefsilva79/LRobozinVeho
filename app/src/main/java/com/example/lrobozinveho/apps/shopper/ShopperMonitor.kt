@@ -159,67 +159,88 @@ class ShopperMonitor(private val service: AccessibilityService) {
             }
             processedNodeHashes.add(nodeHash)
 
-            val priceNodes = node.findAccessibilityNodeInfosByText("$")
-            if (priceNodes?.isNotEmpty() == true && priceNodes.size != lastPriceNodesCount) {
-                lastPriceNodesCount = priceNodes.size
-                Log.d(TAG, """
-                📝 BUSCA OTIMIZADA:
-                Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                Nós com preço encontrados: ${priceNodes.size}
-                ====================
-            """.trimIndent())
-            }
-
             val nodeText = node.text?.toString() ?: ""
 
-            if (nodeText.isNotEmpty()) {
-                Log.d(TAG, """
-                📝 TEXTO NA TELA:
-                Texto: '$nodeText'
-                Classe: ${node.className}
-                ID: ${node.viewIdResourceName ?: "sem-id"}
-                Parent: ${node.parent?.className}
-                ====================
-            """.trimIndent())
+            // ALTERAÇÃO 1: Primeiro procura pela Delivery Area
+            if (targetDeliveryArea != null && !deliveryAreaMatched && nodeText.isNotEmpty()) {
+                if (nodeText.contains("Delivery Area")) {
+                    val areaNumber = nodeText.filter { it.isDigit() }
+                    if (areaNumber == targetDeliveryArea) {
+                        deliveryAreaMatched = true
+                        Log.d(TAG, """
+                    📍 DELIVERY AREA ENCONTRADA:
+                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Área: $nodeText
+                    Número: $areaNumber
+                    ====================
+                    """.trimIndent())
+                    }
+                }
             }
 
-            if (nodeText.isNotEmpty() && !processedNodeTexts.contains(nodeText)) {
-                processedNodeTexts.add(nodeText)
+            // ALTERAÇÃO 2: Só processa preço e outros campos se a área já foi encontrada ou não precisa de área
+            if (targetDeliveryArea == null || deliveryAreaMatched) {
+                val priceNodes = node.findAccessibilityNodeInfosByText("$")
+                if (priceNodes?.isNotEmpty() == true && priceNodes.size != lastPriceNodesCount) {
+                    lastPriceNodesCount = priceNodes.size
+                    Log.d(TAG, """
+                    📝 BUSCA OTIMIZADA:
+                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Nós com preço encontrados: ${priceNodes.size}
+                    ====================
+                """.trimIndent())
+                }
 
-                if (nodeText.startsWith("$") || nodeText.contains("$")) {
-                    val price = extractFirstPrice(nodeText)
-                    if (isPriceText(price)) {
-                        val foundValue = extractNumericValue(price)
-                        val targetValue = targetPrice?.let { extractNumericValue(it) } ?: 0
+                if (nodeText.isNotEmpty()) {
+                    Log.d(TAG, """
+                    📝 TEXTO NA TELA:
+                    Texto: '$nodeText'
+                    Classe: ${node.className}
+                    ID: ${node.viewIdResourceName ?: "sem-id"}
+                    Parent: ${node.parent?.className}
+                    ====================
+                """.trimIndent())
+                }
 
-                        if (foundValue >= targetValue) {
-                            Log.d(TAG, "💲 Preço elegível encontrado: $price >= $targetPrice")
+                if (nodeText.isNotEmpty() && !processedNodeTexts.contains(nodeText)) {
+                    processedNodeTexts.add(nodeText)
 
-                            searchSiblingNodes(node)
-                            searchParentNode(node.parent)
+                    if (nodeText.startsWith("$") || nodeText.contains("$")) {
+                        val price = extractFirstPrice(nodeText)
+                        if (isPriceText(price)) {
+                            val foundValue = extractNumericValue(price)
+                            val targetValue = targetPrice?.let { extractNumericValue(it) } ?: 0
 
-                            Log.d(TAG, """
-                            🔍 CONDIÇÕES APÓS BUSCA EXPANDIDA:
-                            Preço encontrado: $priceFound ($price)
-                            Delivery Area ok: $deliveryAreaMatched (Alvo: $targetDeliveryArea)
-                            Start Time ok: $startTimeMatched (Alvo: $targetStartTime)
-                            Hours ok: $hoursMatched (Alvo: $targetHours)
-                            ====================
-                        """.trimIndent())
+                            if (foundValue >= targetValue) {
+                                Log.d(TAG, "💲 Preço elegível encontrado: $price >= $targetPrice")
 
-                            if (areAllConditionsMet()) {
-                                Log.d(TAG, "🎯 TODAS CONDIÇÕES ATENDIDAS! Clicando...")
-                                clickVerifier.searchAndClickPrice(node, targetPrice!!)
-                                clearTargetPrice()
-                                return
+                                searchSiblingNodes(node)
+                                searchParentNode(node.parent)
+
+                                Log.d(TAG, """
+                                🔍 CONDIÇÕES APÓS BUSCA EXPANDIDA:
+                                Preço encontrado: $priceFound ($price)
+                                Delivery Area ok: $deliveryAreaMatched (Alvo: $targetDeliveryArea)
+                                Start Time ok: $startTimeMatched (Alvo: $targetStartTime)
+                                Hours ok: $hoursMatched (Alvo: $targetHours)
+                                ====================
+                            """.trimIndent())
+
+                                if (areAllConditionsMet()) {
+                                    Log.d(TAG, "🎯 TODAS CONDIÇÕES ATENDIDAS! Clicando...")
+                                    clickVerifier.searchAndClickPrice(node, targetPrice!!)
+                                    clearTargetPrice()
+                                    return
+                                }
                             }
                         }
                     }
-                }
 
-                processSingleNode(node)
+                    processSingleNode(node)
+                }
             }
 
+            // Continua procurando em nós filhos
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i) ?: continue
                 processNode(child)
