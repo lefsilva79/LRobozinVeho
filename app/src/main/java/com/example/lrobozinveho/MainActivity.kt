@@ -3,6 +3,7 @@ package com.example.lrobozinveho
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -42,12 +43,29 @@ class MainActivity : ComponentActivity() {
         }
 
         fun showNotification(context: Context, title: String, content: String) {
+            // Criar um Intent para abrir a MainActivity
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                action = "OPEN_MAIN_ACTIVITY"
+            }
+
+            // Criar PendingIntent
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
             val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setSmallIcon(android.R.drawable.ic_menu_search)
                 .setContentTitle(title)
                 .setContentText(content)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
 
             with(NotificationManagerCompat.from(context)) {
                 if (ActivityCompat.checkSelfPermission(
@@ -148,6 +166,11 @@ class MainActivity : ComponentActivity() {
         val savedSwitchState = sharedPreferences.getBoolean(PREF_ONLY_VEHO, false)
         VehoAcessibility.getInstance()?.priceMonitor?.setOnlyCheckVehoApp(savedSwitchState)
 
+        // Verificar se foi aberto pela notificação
+        if (intent?.action == "OPEN_MAIN_ACTIVITY") {
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+
         setContent {
             MaterialTheme {
                 Surface(
@@ -156,6 +179,24 @@ class MainActivity : ComponentActivity() {
                 ) {
                     MainScreen(lifecycleScope, savedSwitchState)
                 }
+            }
+        }
+    }
+
+    @Suppress("OVERRIDE_DEPRECATED_OPERATOR_MODIFY")
+    override fun onNewIntent(intent: Intent) { // Removido o ? para ser Intent ao invés de Intent?
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        if (intent.action == "OPEN_MAIN_ACTIVITY") {
+            // Traz a activity para frente se não estiver
+            if (!isTaskRoot) {
+                val mainIntent = Intent(this, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    action = intent.action
+                }
+                startActivity(mainIntent)
+                finish()
             }
         }
     }

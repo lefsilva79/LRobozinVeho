@@ -15,7 +15,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import com.example.lrobozinveho.TryClickAndVerify
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.Build
+import android.os.IBinder
 
 @Composable
 fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = false) {
@@ -28,8 +31,33 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var onlyVehoApp by rememberSaveable { mutableStateOf(initialSwitchState) }
 
-    DisposableEffect(onlyVehoApp) {
-        onDispose { }
+    // Adicionando controle do serviço
+    var vehoService by remember { mutableStateOf<VehoService?>(null) }
+    val serviceConnection = remember {
+        object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                vehoService = (service as VehoService.LocalBinder).getService()
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                vehoService = null
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        // Iniciar o serviço de notificação
+        val intent = Intent(context, VehoService::class.java)
+        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+
+        onDispose {
+            context.unbindService(serviceConnection)
+        }
     }
 
     Column(
@@ -124,6 +152,13 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
                 onClick = {
                     if (priceInput.isNotEmpty() && !isSearching) {
                         isSearching = true
+                        // Atualiza a notificação ao iniciar a busca
+                        vehoService?.updateNotificationMessage(
+                            "Buscando com preço mínimo: $ $priceInput" +
+                                    (if (deliveryAreaInput.isNotEmpty()) ", Área: $deliveryAreaInput" else "") +
+                                    (if (startTimeInput.isNotEmpty()) ", Início: $startTimeInput" else "") +
+                                    (if (hoursInput.isNotEmpty()) ", Horas: $hoursInput" else "")
+                        )
                         searchJob = MainActivity.startSearch(
                             context = context,
                             price = priceInput,
@@ -134,6 +169,8 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
                         ) {
                             isSearching = false
                             searchJob = null
+                            // Atualiza a notificação quando terminar a busca
+                            vehoService?.updateNotificationMessage("Serviço em espera")
                         }
                     }
                 },
@@ -150,6 +187,8 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
                         isSearching = false
                         searchJob = null
                         VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
+                        // Atualiza a notificação quando parar manualmente
+                        vehoService?.updateNotificationMessage("Busca interrompida")
                     },
                     modifier = Modifier.weight(1f)
                 ) {
