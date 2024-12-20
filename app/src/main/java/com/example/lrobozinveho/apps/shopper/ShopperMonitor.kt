@@ -5,7 +5,6 @@ import android.content.Context
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.example.lrobozinveho.TryClickAndVerify
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -34,7 +33,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
     private var isProcessingEvent = false
     private val processedNodeTexts = mutableSetOf<String>()
 
-    // Variáveis de controle de estado - agora declaradas apenas uma vez
     private val processedNodeHashes = mutableSetOf<Int>()
     private var lastConditionsState = ""
     private var lastPriceNodesCount = -1
@@ -43,7 +41,11 @@ class ShopperMonitor(private val service: AccessibilityService) {
     init {
         val prefs = service.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         onlyCheckVehoApp = prefs.getBoolean(PREF_ONLY_VEHO, false)
-        Log.d(TAG, "Estado inicial do switch: $onlyCheckVehoApp")
+        Log.d(TAG, """
+            Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+            
+            Estado inicial do switch: $onlyCheckVehoApp
+        """.trimIndent())
     }
 
     private fun getCurrentUTCDateTime(): String {
@@ -56,7 +58,11 @@ class ShopperMonitor(private val service: AccessibilityService) {
         try {
             val currentTime = System.currentTimeMillis()
             if (currentTime - lastProcessedEventTime < 500) {
-                Log.d(TAG, "⏭️ Ignorando evento muito próximo")
+                Log.d(TAG, """
+                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                    
+                    ⏭️ Ignorando evento muito próximo
+                """.trimIndent())
                 return
             }
             lastProcessedEventTime = currentTime
@@ -64,25 +70,27 @@ class ShopperMonitor(private val service: AccessibilityService) {
             val packageName = event.packageName?.toString()
             isShopperApp = packageName == SHOPPER_PACKAGE
 
-            // Se nenhum alvo foi definido, não processa
             if (targetPrice == null && targetDeliveryArea == null &&
                 targetStartTime == null && targetHours == null) {
                 return
             }
 
-            Log.d(
-                TAG, """
-            ====== NOVO EVENTO =====
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
-            Package: $packageName
-            É Veho? $isShopperApp
-            Modo apenas Veho? $onlyCheckVehoApp
-            =======================
-            """.trimIndent()
-            )
+            Log.d(TAG, """
+                ====== NOVO EVENTO =====
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
+                Package: $packageName
+                É Veho? $isShopperApp
+                Modo apenas Veho? $onlyCheckVehoApp
+                =======================
+            """.trimIndent())
 
             if (onlyCheckVehoApp && !isShopperApp) {
-                Log.d(TAG, "🚫 IGNORANDO evento - não é o app Veho")
+                Log.d(TAG, """
+                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                    
+                    🚫 IGNORANDO evento - não é o app Veho
+                """.trimIndent())
                 clearNodes()
                 return
             }
@@ -90,28 +98,15 @@ class ShopperMonitor(private val service: AccessibilityService) {
             val rootNode = service.rootInActiveWindow ?: return
             clearNodes()
 
-            targetPrice?.let { price ->
-                if (clickVerifier.searchAndClickPrice(rootNode, price)) {
-                    Log.d(
-                        TAG, """
-                    ✅ MATCH ENCONTRADO!
-                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                    Preço alvo encontrado e validado!
-                """.trimIndent()
-                    )
-                    priceFound = true
-                    if (areAllConditionsMet()) {
-                        clearTargetPrice()
-                        return
-                    }
-                }
-            }
-
             processNode(rootNode)
             rootNode.recycle()
 
         } catch (e: Exception) {
-            Log.e(TAG, "Erro ao processar evento de acessibilidade", e)
+            Log.e(TAG, """
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
+                Erro ao processar evento de acessibilidade: ${e.message}
+            """.trimIndent())
         }
     }
 
@@ -137,22 +132,20 @@ class ShopperMonitor(private val service: AccessibilityService) {
             .apply()
 
         clearNodes()
-        Log.d(
-            TAG, """
+        Log.d(TAG, """
             ====== ALTERAÇÃO DE MODO ======
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
+            Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+            
             Modo apenas Veho: ${if (enabled) "ATIVADO" else "DESATIVADO"}
             Estado salvo com sucesso
             ==============================
-            """.trimIndent()
-        )
+        """.trimIndent())
     }
 
     private fun processNode(node: AccessibilityNodeInfo) {
         try {
             if (!isShopperApp) return
 
-            // Evita processar o mesmo nó novamente
             val nodeHash = node.hashCode()
             if (processedNodeHashes.contains(nodeHash)) {
                 return
@@ -161,45 +154,44 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
             val nodeText = node.text?.toString() ?: ""
 
-            // ALTERAÇÃO 1: Primeiro procura pela Delivery Area
             if (targetDeliveryArea != null && !deliveryAreaMatched && nodeText.isNotEmpty()) {
                 if (nodeText.contains("Delivery Area")) {
                     val areaNumber = nodeText.filter { it.isDigit() }
                     if (areaNumber == targetDeliveryArea) {
                         deliveryAreaMatched = true
                         Log.d(TAG, """
-                    📍 DELIVERY AREA ENCONTRADA:
-                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                    Área: $nodeText
-                    Número: $areaNumber
-                    ====================
-                    """.trimIndent())
+                            Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                            
+                            📍 DELIVERY AREA ENCONTRADA:
+                            Área: $nodeText
+                            Número: $areaNumber
+                        """.trimIndent())
                     }
                 }
             }
 
-            // ALTERAÇÃO 2: Só processa preço e outros campos se a área já foi encontrada ou não precisa de área
             if (targetDeliveryArea == null || deliveryAreaMatched) {
                 val priceNodes = node.findAccessibilityNodeInfosByText("$")
                 if (priceNodes?.isNotEmpty() == true && priceNodes.size != lastPriceNodesCount) {
                     lastPriceNodesCount = priceNodes.size
                     Log.d(TAG, """
-                    📝 BUSCA OTIMIZADA:
-                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                    Nós com preço encontrados: ${priceNodes.size}
-                    ====================
-                """.trimIndent())
+                        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                        
+                        📝 BUSCA OTIMIZADA:
+                        Nós com preço encontrados: ${priceNodes.size}
+                    """.trimIndent())
                 }
 
                 if (nodeText.isNotEmpty()) {
                     Log.d(TAG, """
-                    📝 TEXTO NA TELA:
-                    Texto: '$nodeText'
-                    Classe: ${node.className}
-                    ID: ${node.viewIdResourceName ?: "sem-id"}
-                    Parent: ${node.parent?.className}
-                    ====================
-                """.trimIndent())
+                        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                        
+                        📝 TEXTO NA TELA:
+                        Texto: '$nodeText'
+                        Classe: ${node.className}
+                        ID: ${node.viewIdResourceName ?: "sem-id"}
+                        Parent: ${node.parent?.className}
+                    """.trimIndent())
                 }
 
                 if (nodeText.isNotEmpty() && !processedNodeTexts.contains(nodeText)) {
@@ -212,25 +204,26 @@ class ShopperMonitor(private val service: AccessibilityService) {
                             val targetValue = targetPrice?.let { extractNumericValue(it) } ?: 0
 
                             if (foundValue >= targetValue) {
-                                Log.d(TAG, "💲 Preço elegível encontrado: $price >= $targetPrice")
+                                Log.d(TAG, """
+                                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                                    
+                                    💲 Preço elegível encontrado: $price >= $targetPrice
+                                """.trimIndent())
 
                                 searchSiblingNodes(node)
                                 searchParentNode(node.parent)
 
-                                Log.d(TAG, """
-                                🔍 CONDIÇÕES APÓS BUSCA EXPANDIDA:
-                                Preço encontrado: $priceFound ($price)
-                                Delivery Area ok: $deliveryAreaMatched (Alvo: $targetDeliveryArea)
-                                Start Time ok: $startTimeMatched (Alvo: $targetStartTime)
-                                Hours ok: $hoursMatched (Alvo: $targetHours)
-                                ====================
-                            """.trimIndent())
-
                                 if (areAllConditionsMet()) {
-                                    Log.d(TAG, "🎯 TODAS CONDIÇÕES ATENDIDAS! Clicando...")
-                                    clickVerifier.searchAndClickPrice(node, targetPrice!!)
-                                    clearTargetPrice()
-                                    return
+                                    Log.d(TAG, """
+                                        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                                        
+                                        🎯 TODAS CONDIÇÕES ATENDIDAS! Tentando clicar...
+                                    """.trimIndent())
+
+                                    if (clickVerifier.clickClaimInCurrentContainer(node)) {
+                                        clearTargetPrice()
+                                        return
+                                    }
                                 }
                             }
                         }
@@ -240,7 +233,6 @@ class ShopperMonitor(private val service: AccessibilityService) {
                 }
             }
 
-            // Continua procurando em nós filhos
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i) ?: continue
                 processNode(child)
@@ -252,7 +244,11 @@ class ShopperMonitor(private val service: AccessibilityService) {
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Erro ao processar nó", e)
+            Log.e(TAG, """
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
+                Erro ao processar nó: ${e.message}
+            """.trimIndent())
         }
     }
 
@@ -261,7 +257,11 @@ class ShopperMonitor(private val service: AccessibilityService) {
         for (i in 0 until parent.childCount) {
             val sibling = parent.getChild(i) ?: continue
             if (sibling != node) {
-                Log.d(TAG, "👥 Verificando nó irmão")
+                Log.d(TAG, """
+                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                    
+                    👥 Verificando nó irmão
+                """.trimIndent())
                 processSingleNode(sibling)
             }
             sibling.recycle()
@@ -270,7 +270,11 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
     private fun searchParentNode(parent: AccessibilityNodeInfo?) {
         parent?.let {
-            Log.d(TAG, "👆 Verificando nó pai")
+            Log.d(TAG, """
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
+                👆 Verificando nó pai
+            """.trimIndent())
             processSingleNode(it)
         }
     }
@@ -284,12 +288,11 @@ class ShopperMonitor(private val service: AccessibilityService) {
             targetDeliveryArea?.let { target ->
                 if (areaNumber == target) {
                     Log.d(TAG, """
-                    ✅ DELIVERY AREA MATCH
-                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                    
                     Área encontrada: $areaNumber
                     Área alvo: $target
-                    """.trimIndent()
-                    )
+                """.trimIndent())
                     deliveryAreaMatched = true
                     logNodeDetails(node)
                 }
@@ -308,14 +311,13 @@ class ShopperMonitor(private val service: AccessibilityService) {
             targetStartTime?.let { target ->
                 if (hour != null && hour >= target) {
                     Log.d(TAG, """
-                    ✅ START TIME MATCH
-                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                    
                     Horário encontrado: $fullTime
                     Horário numérico: $hour
                     Horário mínimo: $target
                     Texto original: $nodeText
-                    """.trimIndent()
-                    )
+                """.trimIndent())
                     startTimeMatched = true
                     logNodeDetails(node)
                 }
@@ -327,13 +329,12 @@ class ShopperMonitor(private val service: AccessibilityService) {
             targetHours?.let { target ->
                 if (firstDigit != null && firstDigit <= target) {
                     Log.d(TAG, """
-                    ✅ HOURS MATCH
-                    Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                    
                     Duração encontrada: $firstDigit
                     Duração máxima: $target
                     Texto original: $nodeText
-                    """.trimIndent()
-                    )
+                """.trimIndent())
                     hoursMatched = true
                     logNodeDetails(node)
                 }
@@ -342,25 +343,41 @@ class ShopperMonitor(private val service: AccessibilityService) {
 
         when {
             nodeText == "$" -> {
-                Log.d(TAG, "💲 Símbolo $ encontrado")
+                Log.d(TAG, """
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
+                Símbolo $ encontrado
+            """.trimIndent())
                 lastDollarSign = node
                 lastProcessedNode = node
             }
             lastDollarSign != null && nodeText.all { it.isDigit() || it == '.' } -> {
                 val combinedText = "$$nodeText"
-                Log.d(TAG, "🔄 Combinando $ com número: $combinedText")
+                Log.d(TAG, """
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
+                Combinando $ com número: $combinedText
+            """.trimIndent())
                 handlePrice(combinedText, node)
                 lastDollarSign = null
                 lastProcessedNode = node
             }
             nodeText.startsWith("$") -> {
-                Log.d(TAG, "💲 Texto já começa com $: $nodeText")
+                Log.d(TAG, """
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
+                Texto já começa com $: $nodeText
+            """.trimIndent())
                 handlePrice(nodeText, node)
                 lastProcessedNode = node
             }
             else -> {
                 if (nodeText.contains("$")) {
-                    Log.d(TAG, "💲 Texto contém $ em algum lugar: $nodeText")
+                    Log.d(TAG, """
+                    Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                    
+                    Texto contém $ em algum lugar: $nodeText
+                """.trimIndent())
                     handlePrice(nodeText, node)
                 }
                 lastProcessedNode = node
@@ -370,25 +387,28 @@ class ShopperMonitor(private val service: AccessibilityService) {
         checkAllConditions()
     }
 
-    private fun areAllConditionsMet(): Boolean {
-        val allMet = priceFound &&
+    private fun checkAllConditions() {
+        val allConditionsMet = priceFound &&
                 (targetDeliveryArea == null || deliveryAreaMatched) &&
                 (targetStartTime == null || startTimeMatched) &&
                 (targetHours == null || hoursMatched)
 
-        if (allMet && allMet != lastAllMetState) {
-            lastAllMetState = allMet
-            Log.d(TAG, """
-            ✅ TODAS AS CONDIÇÕES ATENDIDAS
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
-            Preço encontrado: $priceFound
-            Delivery Area ok: ${targetDeliveryArea == null || deliveryAreaMatched}
-            Start Time ok: ${targetStartTime == null || startTimeMatched}
-            Hours ok: ${targetHours == null || hoursMatched}
-        """.trimIndent())
-        }
+        // Criar string do estado atual
+        val currentState = """
+        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+        
+        Preço encontrado: $priceFound
+        Delivery Area ok: ${targetDeliveryArea == null || deliveryAreaMatched}
+        Start Time ok: ${targetStartTime == null || startTimeMatched}
+        Hours ok: ${targetHours == null || hoursMatched}
+        TODAS CONDIÇÕES ATENDIDAS: $allConditionsMet
+    """.trimIndent()
 
-        return allMet
+        // Só loga se o estado mudou
+        if (currentState != lastConditionsState) {
+            lastConditionsState = currentState
+            Log.d(TAG, currentState)
+        }
     }
 
     private fun extractFirstDigit(text: String): Int? {
@@ -414,145 +434,95 @@ class ShopperMonitor(private val service: AccessibilityService) {
             val foundValue = extractNumericValue(firstPrice)
             val targetValue = targetPrice?.let { extractNumericValue(it) } ?: 0
 
-            Log.d(
-                TAG, """
-            ### PREÇO ENCONTRADO ###
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
+            Log.d(TAG, """
+            Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+            
             Valor original: $price
             Primeiro valor: $firstPrice
             Valor numérico: $foundValue
             Valor alvo: $targetValue
-            App: ${if (isShopperApp) "Veho" else "outro"}
-            Modo apenas Veho: $onlyCheckVehoApp
-            ######################
-            """.trimIndent()
-            )
+        """.trimIndent())
 
             if (targetValue > 0 && foundValue >= targetValue) {
-                Log.d(
-                    TAG, """
-                ### PREÇO VÁLIDO ENCONTRADO ###
-                Data/Hora (UTC): ${getCurrentUTCDateTime()}
+                Log.d(TAG, """
+                Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+                
                 Encontrado: $$foundValue >= Alvo: $$targetValue
-                #############################
-                """.trimIndent()
-                )
+            """.trimIndent())
                 priceFound = true
                 logNodeDetails(node)
             }
         }
     }
 
-    private fun checkAllConditions() {
-        val allConditionsMet = priceFound &&
-                (targetDeliveryArea == null || deliveryAreaMatched) &&
-                (targetStartTime == null || startTimeMatched) &&
-                (targetHours == null || hoursMatched)
-
-        // Criar string do estado atual
-        val currentState = """
-            Preço encontrado: $priceFound
-            Delivery Area ok: ${targetDeliveryArea == null || deliveryAreaMatched}
-            Start Time ok: ${targetStartTime == null || startTimeMatched}
-            Hours ok: ${targetHours == null || hoursMatched}
-            TODAS CONDIÇÕES ATENDIDAS: $allConditionsMet
-        """.trimIndent()
-
-        // Só loga se o estado mudou
-        if (currentState != lastConditionsState) {
-            lastConditionsState = currentState
-            Log.d(
-                TAG, """
-                ====== VERIFICAÇÃO DE CONDIÇÕES ======
-                Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                $currentState
-                ===================================
-                """.trimIndent()
-            )
-        }
-    }
-
     private fun logNodeDetails(node: AccessibilityNodeInfo) {
         try {
-            Log.d(
-                TAG, """
-                ====== DETALHES DO NÓ ======
-                Data/Hora (UTC): ${getCurrentUTCDateTime()}
-                Texto: ${node.text}
-                Classe: ${node.className}
-                ID: ${node.viewIdResourceName ?: "sem-id"}
-                Clicável: ${node.isClickable}
-                Habilitado: ${node.isEnabled}
-                Pacote: ${node.packageName}
-                Parent: ${node.parent?.className}
-                Bounds: ${node.getBoundsInScreen(android.graphics.Rect())}
-                ===========================
-                """.trimIndent()
-            )
+            Log.d(TAG, """
+            Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+            
+            Texto: ${node.text}
+            Classe: ${node.className}
+            ID: ${node.viewIdResourceName ?: "sem-id"}
+            Clicável: ${node.isClickable}
+            Habilitado: ${node.isEnabled}
+            Pacote: ${node.packageName}
+            Parent: ${node.parent?.className}
+        """.trimIndent())
         } catch (e: Exception) {
-            Log.e(TAG, "Erro ao registrar detalhes do nó", e)
+            Log.e(TAG, """
+            Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+            
+            Erro ao registrar detalhes do nó: ${e.message}
+        """.trimIndent())
         }
     }
 
     fun setTargetPrice(price: String) {
         targetPrice = price
         priceFound = false
-        lastAllMetState = false // Nova linha
-        lastConditionsState = "" // Nova linha
-        Log.d(
-            TAG, """
-            ====== NOVO ALVO: PREÇO ======
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
-            Valor definido: $price
-            ===========================
-            """.trimIndent()
-        )
+        lastAllMetState = false
+        lastConditionsState = ""
+        Log.d(TAG, """
+        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+        
+        Valor definido: $price
+    """.trimIndent())
     }
 
     fun setTargetDeliveryArea(area: String) {
         targetDeliveryArea = area
         deliveryAreaMatched = false
-        lastAllMetState = false // Nova linha
-        lastConditionsState = "" // Nova linha
-        Log.d(
-            TAG, """
-            ====== NOVO ALVO: ÁREA ======
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
-            Área definida: $area
-            ===========================
-            """.trimIndent()
-        )
+        lastAllMetState = false
+        lastConditionsState = ""
+        Log.d(TAG, """
+        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+        
+        Área definida: $area
+    """.trimIndent())
     }
 
     fun setTargetStartTime(time: String) {
-        // Converte a string completa para número
         targetStartTime = time.toIntOrNull()
         startTimeMatched = false
-        lastAllMetState = false // Nova linha
-        lastConditionsState = "" // Nova linha
-        Log.d(
-            TAG, """
-        ====== NOVO ALVO: HORÁRIO ======
-        Data/Hora (UTC): ${getCurrentUTCDateTime()}
+        lastAllMetState = false
+        lastConditionsState = ""
+        Log.d(TAG, """
+        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+        
         Horário definido: $targetStartTime
-        ===========================
-        """.trimIndent()
-        )
+    """.trimIndent())
     }
 
     fun setTargetHours(hours: String) {
         targetHours = hours.firstOrNull()?.toString()?.toIntOrNull()
         hoursMatched = false
-        lastAllMetState = false // Nova linha
-        lastConditionsState = "" // Nova linha
-        Log.d(
-            TAG, """
-            ====== NOVO ALVO: DURAÇÃO ======
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
-            Duração definida: $targetHours
-            ===========================
-            """.trimIndent()
-        )
+        lastAllMetState = false
+        lastConditionsState = ""
+        Log.d(TAG, """
+        Current Date and Time (UTC): ${getCurrentUTCDateTime()}
+        
+        Duração definida: $targetHours
+    """.trimIndent())
     }
 
     fun clearTargetPrice() {
@@ -564,19 +534,43 @@ class ShopperMonitor(private val service: AccessibilityService) {
         deliveryAreaMatched = false
         startTimeMatched = false
         hoursMatched = false
-        lastAllMetState = false // Nova linha
-        lastConditionsState = "" // Nova linha
-        Log.d(
-            TAG, """
-            ====== LIMPEZA DE ALVOS ======
-            Data/Hora (UTC): ${getCurrentUTCDateTime()}
-            Todos os alvos foram limpos
-            ===========================
-            """.trimIndent()
-        )
+        lastAllMetState = false
+        lastConditionsState = ""
+        Log.d(TAG, """
+        Current Date and Time (UTC): ${getCurrentUTCDateTime()}        
+        Todos os alvos foram limpos
+    """.trimIndent())
     }
 
     fun isPriceFound(): Boolean = priceFound
     fun isTargetApp(): Boolean = isShopperApp
     fun getTargetPrice(): String? = targetPrice
+
+    private fun areAllConditionsMet(): Boolean {
+        val allMet = priceFound &&
+                (targetDeliveryArea == null || deliveryAreaMatched) &&
+                (targetStartTime == null || startTimeMatched) &&
+                (targetHours == null || hoursMatched)
+
+        if (allMet && allMet != lastAllMetState) {
+            lastAllMetState = allMet
+            Log.d(TAG, "Current Date and Time (UTC): ${getCurrentUTCDateTime()}")
+
+            // Pega o nó raiz da janela ativa
+            val rootNode = service.rootInActiveWindow
+            if (rootNode != null) {
+                // Usa o clickVerifier para tentar clicar
+                val clicked = clickVerifier.clickClaimInCurrentContainer(rootNode)
+                rootNode.recycle() // Importante reciclar o nó após o uso
+
+                if (clicked) {
+                    clearTargetPrice() // Limpa os alvos se o clique foi bem sucedido
+                }
+
+                return clicked
+            }
+        }
+
+        return allMet
+    }
 }
