@@ -152,7 +152,7 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
                 onClick = {
                     if (priceInput.isNotEmpty() && !isSearching) {
                         isSearching = true
-                        // Atualiza a notificação ao iniciar a busca
+                        vehoService?.startSearching() // Nova linha adicionada
                         vehoService?.updateNotificationMessage(
                             "Buscando com preço mínimo: $ $priceInput" +
                                     (if (deliveryAreaInput.isNotEmpty()) ", Área: $deliveryAreaInput" else "") +
@@ -169,7 +169,7 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
                         ) {
                             isSearching = false
                             searchJob = null
-                            // Atualiza a notificação quando terminar a busca
+                            vehoService?.stopSearching() // Nova linha adicionada
                             vehoService?.updateNotificationMessage("Serviço em espera")
                         }
                     }
@@ -187,7 +187,7 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
                         isSearching = false
                         searchJob = null
                         VehoAcessibility.getInstance()?.priceMonitor?.clearTargetPrice()
-                        // Atualiza a notificação quando parar manualmente
+                        vehoService?.stopSearching() // Nova linha adicionada
                         vehoService?.updateNotificationMessage("Busca interrompida")
                     },
                     modifier = Modifier.weight(1f)

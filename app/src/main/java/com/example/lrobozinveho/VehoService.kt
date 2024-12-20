@@ -16,6 +16,7 @@ class VehoService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var notificationCheckHandler: Handler? = null
     private var currentMessage = ""
+    private var isActiveSearch = false
 
     inner class LocalBinder : Binder() {
         fun getService(): VehoService = this@VehoService
@@ -82,23 +83,25 @@ class VehoService : Service() {
     private fun startNotificationMonitoring() {
         notificationCheckHandler?.postDelayed(object : Runnable {
             override fun run() {
-                val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-                val notifications = notificationManager.activeNotifications
+                if (isActiveSearch) { // <-- Esta é a única alteração nesta função
+                    val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                    val notifications = notificationManager.activeNotifications
 
-                if (notifications.none { it.id == NotificationHelper.NOTIFICATION_ID }) {
-                    startForeground(
-                        NotificationHelper.NOTIFICATION_ID,
-                        notificationHelper.createNotification(
-                            "LRobozin Veho está ativo",
-                            currentMessage
+                    if (notifications.none { it.id == NotificationHelper.NOTIFICATION_ID }) {
+                        startForeground(
+                            NotificationHelper.NOTIFICATION_ID,
+                            notificationHelper.createNotification(
+                                "LRobozin está ativo",
+                                currentMessage
+                            )
                         )
-                    )
+                    }
                 }
-
                 notificationCheckHandler?.postDelayed(this, 1000)
             }
         }, 1000)
     }
+
 
     fun updateNotificationMessage(message: String) {
         try {
@@ -141,5 +144,21 @@ class VehoService : Service() {
             android.os.SystemClock.elapsedRealtime() + 1000,
             restartServicePendingIntent
         )
+    }
+    fun startSearching() {
+        isActiveSearch = true
+        startForeground(
+            NotificationHelper.NOTIFICATION_ID,
+            notificationHelper.createNotification(
+                "LRobozin Veho está ativo",
+                currentMessage
+            )
+        )
+    }
+
+    fun stopSearching() {
+        isActiveSearch = false
+        notificationHelper.cancelNotification()
+        stopForeground(true)
     }
 }
