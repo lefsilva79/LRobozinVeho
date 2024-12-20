@@ -63,8 +63,8 @@ class TryClickAndVerify {
                     val clickTime = System.currentTimeMillis()
                     Log.d(TAG, "✅ Botão Claim encontrado - MODO TESTE (SEM CLIQUE) (${clickTime - findTime}ms)")
                     // Comentado para testes - desabilita o clique real
-                    //val clicked = claimButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    val clicked = true // Alterado para false para não disparar a notificação
+                    val clicked = claimButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    //val clicked = true // Alterado para false para não disparar a notificação
                     val endTime = System.currentTimeMillis()
 
                     Log.d(TAG, """

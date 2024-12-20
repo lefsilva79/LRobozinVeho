@@ -396,13 +396,12 @@ class ShopperMonitor(private val service: AccessibilityService) {
     }
 
     private fun extractFirstPrice(text: String): String {
-        val regex = """\$(\d+)""".toRegex()
-        return regex.find(text)?.groupValues?.get(1)?.let { "$$it" } ?: text
+        val regex = """\$\d+(-\$\d+)?""".toRegex()
+        return regex.find(text)?.value ?: text
     }
 
     private fun isPriceText(text: String): Boolean {
-        val firstPrice = extractFirstPrice(text)
-        return firstPrice.matches(Regex("""\$\d+(\.\d{0,2})?"""))
+        return text.matches(Regex("""\$\d+(-\$\d+)?"""))
     }
 
     private fun extractNumericValue(price: String): Int {
