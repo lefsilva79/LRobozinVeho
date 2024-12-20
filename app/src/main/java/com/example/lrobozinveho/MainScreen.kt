@@ -39,7 +39,6 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Campo de Preço
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -51,8 +50,11 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
             OutlinedTextField(
                 value = priceInput,
                 onValueChange = { newValue ->
-                    if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
-                        priceInput = newValue
+                    if (newValue.isEmpty() || (newValue.all { it.isDigit() } && newValue.length <= 3)) {
+                        val numericValue = newValue.toIntOrNull()
+                        if (numericValue == null || numericValue <= 999) {
+                            priceInput = newValue
+                        }
                     }
                 },
                 label = { Text("Preço mínimo") },
@@ -63,12 +65,14 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
             )
         }
 
-        // Campo Delivery Area
         OutlinedTextField(
             value = deliveryAreaInput,
             onValueChange = { newValue ->
-                if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
-                    deliveryAreaInput = newValue
+                if (newValue.isEmpty() || (newValue.all { it.isDigit() } && newValue.length <= 1)) {
+                    val numericValue = newValue.toIntOrNull()
+                    if (numericValue == null || numericValue <= 9) {
+                        deliveryAreaInput = newValue
+                    }
                 }
             },
             label = { Text("Delivery Area") },
@@ -78,12 +82,14 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Campo Start Time
         OutlinedTextField(
             value = startTimeInput,
             onValueChange = { newValue ->
-                if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
-                    startTimeInput = newValue
+                if (newValue.isEmpty() || (newValue.all { it.isDigit() } && newValue.length <= 2)) {
+                    val numericValue = newValue.toIntOrNull()
+                    if (numericValue == null || numericValue <= 12) {
+                        startTimeInput = newValue
+                    }
                 }
             },
             label = { Text("Start Time") },
@@ -93,12 +99,14 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Campo Hours
         OutlinedTextField(
             value = hoursInput,
             onValueChange = { newValue ->
-                if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
-                    hoursInput = newValue
+                if (newValue.isEmpty() || (newValue.all { it.isDigit() } && newValue.length <= 1)) {
+                    val numericValue = newValue.toIntOrNull()
+                    if (numericValue == null || numericValue <= 9) {
+                        hoursInput = newValue
+                    }
                 }
             },
             label = { Text("Hours") },
@@ -108,7 +116,6 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Botões de ação
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -151,7 +158,6 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
             }
         }
 
-        // Botão de Acessibilidade
         Button(
             onClick = {
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
@@ -162,7 +168,6 @@ fun MainScreen(coroutineScope: CoroutineScope, initialSwitchState: Boolean = fal
             Text("Verificar Serviço de Acessibilidade")
         }
 
-        // Switch do Veho
         Row(
             modifier = Modifier
                 .fillMaxWidth()
